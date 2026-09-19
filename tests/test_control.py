@@ -117,15 +117,40 @@ class TypedControllerTests(unittest.TestCase):
         self.assertEqual(armed.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
 
-    def test_landing_final_approach_is_rotated_ten_degrees_clockwise(self) -> None:
+    def test_landing_final_approach_matches_captured_heading(self) -> None:
         rows = [line.split("\t") for line in LANDING_MISSION.read_text().splitlines()[1:]]
-        threshold_lat, threshold_lon = float(rows[3][8]), float(rows[3][9])
-        touchdown_lat, touchdown_lon = float(rows[4][8]), float(rows[4][9])
-        mean_lat = math.radians((threshold_lat + touchdown_lat) / 2)
-        north = (touchdown_lat - threshold_lat) * 111_320
-        east = (touchdown_lon - threshold_lon) * 111_320 * math.cos(mean_lat)
-        heading = math.degrees(math.atan2(east, north)) % 360
-        self.assertAlmostEqual(heading, 82.97, places=1)
+        straight_approach = rows[-4:]
+        headings = []
+        for start, end in zip(straight_approach, straight_approach[1:]):
+            start_lat, start_lon = float(start[8]), float(start[9])
+            end_lat, end_lon = float(end[8]), float(end[9])
+            mean_lat = math.radians((start_lat + end_lat) / 2)
+            north = (end_lat - start_lat) * 111_320
+            east = (end_lon - start_lon) * 111_320 * math.cos(mean_lat)
+            headings.append(math.degrees(math.atan2(east, north)) % 360)
+        for heading in headings:
+            self.assertAlmostEqual(heading, 254.96, places=1)
+
+    def test_static_landing_starts_over_ocean_with_required_clearance(self) -> None:
+        rows = [line.split("\t") for line in LANDING_MISSION.read_text().splitlines()[1:]]
+        first_navigation_waypoint = rows[2]
+        self.assertEqual(int(first_navigation_waypoint[3]), 16)
+        self.assertEqual(
+            (float(first_navigation_waypoint[8]), float(first_navigation_waypoint[9])),
+            (71.999299, -94.843167),
+        )
+        self.assertGreaterEqual(float(first_navigation_waypoint[10]), 75.99)
+
+        touchdown = rows[-1]
+        self.assertEqual(
+            (float(touchdown[8]), float(touchdown[9])),
+            (71.9982129, -94.8420161),
+        )
+        mountain_latitude = 71.995786
+        navigated_rows = [row for row in rows if int(row[3]) in (16, 21)]
+        self.assertTrue(
+            all(float(row[8]) > mountain_latitude for row in navigated_rows)
+        )
 
     def test_tower_functions_use_cmdlong_without_optional_servo_module(self) -> None:
         controller, session = self.controller_for(Tower.two())

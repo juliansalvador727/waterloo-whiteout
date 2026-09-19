@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
         "--landing-mission",
         type=Path,
         default=DEFAULT_LANDING_MISSION,
-        help="ArduPlane QGC WPL landing mission",
+        help="QGC WPL mission; defaults to the fixed repeatable arctic-sim path",
     )
     parser.add_argument(
         "--confirm-flight",
