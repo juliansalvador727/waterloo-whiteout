@@ -1,11 +1,12 @@
 # Dominion Dynamics WHITEOUT controller scaffold
 
-WHITEOUT is a small, safety-first Python 3.11+ foundation for ingesting simulator imagery and telemetry, estimating a target position, maintaining a track, and recommending observation actions. It does not control vehicles.
+WHITEOUT is a small, safety-first Python 3.11+ foundation for ingesting simulator imagery and telemetry, estimating a target position, maintaining a track, recommending observation actions, and explicitly controlling simulator assets through MAVProxy.
 
 ## Safety defaults
 
-- No code in this repository arms, moves, resets, rebuilds, or changes simulator settings.
+- Nothing arms or moves automatically. Vehicle commands are transmitted only when a caller explicitly opens a `MavProxySession` and sends them.
 - MAVLink uses `udpout` because each simulator MAVProxy endpoint is an `udpin` listener. The adapter exposes telemetry polling and no flight-control interface. An explicit `connect(initiate_telemetry=True)` may send one benign GCS heartbeat to establish telemetry; the default sends nothing.
+- Simulator control launches `mavproxy.py` with `--master=udpout:<host>:<port>` and writes validated console commands to that process. It does not implement a parallel direct-pymavlink control path.
 - Coordinator outputs are plain `ActionRecommendation` values. They are not executed.
 - There is no local HTTP server. `TrackApiClient` only makes an outbound POST to the configured Dominion endpoint.
 - Outbound track submission requires both `track_api.allow_submission: true` in configuration and explicit confirmation from the caller. The test submission utility requires `--confirm`.
@@ -13,7 +14,7 @@ WHITEOUT is a small, safety-first Python 3.11+ foundation for ingesting simulato
 
 ## Setup
 
-Create a Python 3.11 or newer virtual environment, then install the package in editable mode. The unit tests need no third-party packages. Install only the optional features you use: `whiteout[yaml]` for YAML configuration, `whiteout[camera]` for OpenCV decoding, or `whiteout[mavlink]` for telemetry.
+Create a Python 3.11 or newer virtual environment, then install the package in editable mode. The unit tests need no third-party packages. Install only the optional features you use: `whiteout[yaml]` for YAML configuration, `whiteout[camera]` for OpenCV decoding, `whiteout[mavlink]` for direct telemetry polling, or `whiteout[mavproxy]` for simulator control.
 
 Copy `.env.example` to `.env` only if your process manager loads it. The package does not silently load dotenv files. Copy `config.example.yaml` to `config.yaml`, set `placement_owner`, and validate it with `whiteout --config config.yaml --check-config`. JSON configuration works without PyYAML.
 
@@ -30,6 +31,8 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 - `camera.py`: reconnecting MJPEG byte ingestion with optional OpenCV decoding.
 - `detector.py`: detector protocol plus a safe detector that returns no observations.
 - `mavlink.py`: optional telemetry-only `GLOBAL_POSITION_INT` polling over `udpout`, plus the explicit discovery heartbeat.
+- `mavproxy.py`: managed MAVProxy subprocess sessions used for explicit simulator control.
+- `objects.py`: typed copter, plane, reserved boat, and tower descriptions with validated MAVProxy console commands.
 - `geolocation.py`: pinhole ray intersection with a locally flat water plane and propagated uncertainty.
 - `tracker.py`: alpha-beta constant-velocity track filtering.
 - `coordinator.py`: SEARCH, CONFIRM, TRACK, and REACQUIRE recommendation logic.
@@ -39,9 +42,40 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 
 The flat-water estimator is intentionally local and approximate. Camera calibration, mounting angles, water elevation, and uncertainty values must be measured for a real deployment.
 
+## Repository object classes
+
+`whiteout.objects` contains `Copter`, `Plane`, `Boat`, and `Tower` classes. Each class owns its arctic-sim MAVProxy endpoint, supported modes, and relevant command builders. The rover is intentionally absent because it is not part of the WHITEOUT fleet. Install MAVProxy before opening a session:
+
+```text
+pip install -e ".[mavproxy]"
+```
+
+```python
+from whiteout.objects import Copter, Tower
+
+copter = Copter(host="sim.example")
+print(copter.mavproxy_start_command())  # mavproxy.py --master=udpout:sim.example:14550
+print(copter.mode("GUIDED"))            # mode GUIDED
+print(copter.takeoff(20))               # takeoff 20
+
+tower_command = Tower.two().pan(1200)
+```
+
+To transmit commands, explicitly open a MAVProxy session. The subprocess uses an argument vector rather than a shell and connects in `udpout` mode, as required by arctic-sim's `udpin` endpoints:
+
+```python
+copter = Copter(host="localhost")
+with copter.mavproxy_session() as mavproxy:
+    mavproxy.send(copter.mode("GUIDED"))
+    mavproxy.send(copter.arm())
+    mavproxy.send(copter.takeoff(20))
+```
+
+The `Boat` class records the reserved ArduRover-based boat role, but its `bundled` flag is false because arctic-sim does not currently include that model. A boat session therefore cannot be opened. Towers do not expose arming, and their sessions automatically load MAVProxy's optional `servo` module for `pan()` and `tilt()`. Unsupported modes and out-of-range PWM values raise an error before a command is transmitted.
+
 ## Detector integration
 
-The detector implementation is the teammate integration point. Implement the `Detector` protocol with a class whose `detect(frame)` method returns typed `Detection` values. Keep model loading in the implementation constructor so importing WHITEOUT remains usable offline. Convert detections to `GeoEstimate` values using the camera calibration and the matching platform pose before updating the tracker. The included `NoOpDetector` is the default safe placeholder. The current coordinator produces recommendations only; it does not execute or transmit vehicle actions.
+The detector implementation is the teammate integration point. Implement the `Detector` protocol with a class whose `detect(frame)` method returns typed `Detection` values. Keep model loading in the implementation constructor so importing WHITEOUT remains usable offline. Convert detections to `GeoEstimate` values using the camera calibration and the matching platform pose before updating the tracker. The included `NoOpDetector` is the default safe placeholder. The current coordinator produces recommendations only; it is not wired to a MAVProxy session and does not execute or transmit vehicle actions.
 
 ## Placement owner and simulator location
 
@@ -77,6 +111,6 @@ Submission remains disabled by default. A POST occurs only when configuration se
 7. Review uncertainties and recommendation transitions with the placement owner.
 8. If Dominion submission is approved, set both the endpoint and config opt-in. Exercise `scripts/submit_test_track.py --confirm` only against that approved endpoint.
 
-No step should add flight-command transmission to this project. A separate, reviewed control system may consume recommendations if the deployment requires it.
+Keep recommendation generation separate from command transmission. A caller must explicitly decide which reviewed recommendations, if any, to send through a `MavProxySession`.
 
 The built-in placeholder pipeline can process a bounded camera sample with `whiteout --config config.yaml --observe-camera NAME --max-frames 10 --confirm-network`. It uses `NoOpDetector`, makes recommendations only, and never submits tracks.
