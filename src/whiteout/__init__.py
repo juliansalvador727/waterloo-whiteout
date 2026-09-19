@@ -7,6 +7,14 @@ from .arctic_sim import (
     arctic_sim_fleet,
 )
 from .mavproxy import MavProxyNotRunning, MavProxySession, MavProxyUnavailable
+from .mission import MissionValidationError, MissionWaypoint, SearchMission
+from .observation import ObservationMetadata, SynchronizationStatus
+from .search import (
+    DetectionSource,
+    SearchAction,
+    SearchOrchestrator,
+    SearchRecommendation,
+)
 from .control import (
     CopterController,
     CopterMode,
@@ -44,16 +52,25 @@ __all__ = [
     "MavProxyCommand",
     "MavProxyConnectionError",
     "MissionUploadError",
+    "MissionValidationError",
+    "MissionWaypoint",
     "MavProxyNotRunning",
     "MavProxySession",
     "MavProxyUnavailable",
     "ObjectType",
     "ObjectController",
+    "ObservationMetadata",
     "Plane",
     "PlaneController",
     "PlaneMode",
     "Quadcopter",
     "RepositoryObject",
+    "SearchAction",
+    "SearchMission",
+    "SearchOrchestrator",
+    "SearchRecommendation",
+    "DetectionSource",
+    "SynchronizationStatus",
     "Tower",
     "TowerController",
     "VehicleStateError",
@@ -63,4 +80,3 @@ __all__ = [
 ]
 
 __version__ = "0.1.0"
-
