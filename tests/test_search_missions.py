@@ -121,7 +121,7 @@ class SearchMissionTests(unittest.TestCase):
                 mission = controller.upload_search_mission(mission_path)
                 self.assertEqual(controller.search_mission, mission)
                 commands = [str(call.args[0]) for call in session.send.call_args_list]
-                self.assertEqual(commands, [f"wp load {mission_path}"])
+                self.assertEqual(commands, [str(vehicle.load_mission(str(mission_path)))])
                 self.assertFalse(any(command.startswith("arm") for command in commands))
                 self.assertNotIn("mode AUTO", commands)
 
