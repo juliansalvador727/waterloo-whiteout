@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WHITEOUT Mission Control</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071013;
+      --panel: #0c181d;
+      --panel-2: #102229;
+      --line: #213940;
+      --text: #e9f3f5;
+      --muted: #789097;
+      --cyan: #45d9f5;
+      --mint: #48ffbd;
+      --amber: #ffbf69;
+      --red: #ff667d;
+      --blue: #61a8ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; overflow: hidden; color: var(--text); background:
+        radial-gradient(circle at 85% 0%, #102a31 0, transparent 28%), var(--bg);
+      font: 12px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    header {
+      height: 58px; display: flex; align-items: center; gap: 24px; padding: 0 18px;
+      border-bottom: 1px solid var(--line); background: rgba(7,16,19,.92);
+    }
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 210px; }
+    .brand-mark { width: 25px; height: 25px; border: 2px solid var(--cyan); transform: rotate(45deg); }
+    .brand b { display:block; font-size:14px; letter-spacing:.18em; }
+    .brand span { color: var(--muted); font-size: 9px; letter-spacing:.12em; }
+    .headline { display:flex; gap:22px; flex:1; }
+    .metric { min-width: 95px; }
+    .metric label { color:var(--muted); display:block; font-size:9px; letter-spacing:.12em; text-transform:uppercase; }
+    .metric strong { display:block; margin-top:2px; font-size:13px; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; border:1px solid var(--line); border-radius:20px; }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); box-shadow:0 0 8px currentColor; }
+    .online, .locked, .track { color:var(--mint)!important; }
+    .degraded, .found, .confirm, .predicted { color:var(--amber)!important; }
+    .offline, .lost, .error { color:var(--red)!important; }
+    .search, .reacquire { color:var(--cyan)!important; }
+    #replay-controls { display:none; align-items:center; gap:8px; }
+    #replay-controls button, #replay-controls select {
+      color:var(--text); background:var(--panel-2); border:1px solid var(--line); border-radius:4px; padding:5px 8px;
+    }
+    main {
+      height: calc(100vh - 58px); padding: 10px; display:grid; gap:10px;
+      grid-template-columns: minmax(0, 2.05fr) minmax(340px, 1fr);
+      grid-template-rows: minmax(0, 1fr) 126px;
+    }
+    .camera-grid { min-height:0; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:8px; }
+    .camera-card, .panel {
+      min-width:0; min-height:0; position:relative; overflow:hidden; border:1px solid var(--line);
+      border-radius:7px; background:var(--panel); box-shadow:0 8px 30px rgba(0,0,0,.15);
+    }
+    .camera-card img { width:100%; height:100%; object-fit:contain; background:#020708; display:block; }
+    .camera-head {
+      position:absolute; z-index:2; left:0; right:0; top:0; height:36px; padding:8px 10px;
+      display:flex; justify-content:space-between; align-items:center; background:linear-gradient(#061014e8, transparent);
+      pointer-events:none;
+    }
+    .camera-name { font-weight:750; letter-spacing:.1em; font-size:10px; }
+    .camera-meta { display:flex; gap:9px; color:#bed0d5; font-variant-numeric:tabular-nums; }
+    .camera-foot {
+      position:absolute; z-index:2; left:8px; right:8px; bottom:7px; display:flex; justify-content:space-between; align-items:end;
+      text-shadow:0 1px 4px #000; pointer-events:none;
+    }
+    .activity { color:var(--cyan); font-weight:700; letter-spacing:.08em; }
+    .assignment { max-width:65%; color:#d0dde0; text-align:right; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .side { min-height:0; display:grid; grid-template-rows:minmax(280px, 1.7fr) minmax(160px, 1fr); gap:8px; }
+    .panel-title {
+      height:34px; display:flex; align-items:center; justify-content:space-between; padding:0 10px;
+      border-bottom:1px solid var(--line); color:#b9cbd0; font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+    }
+    .map-wrap { height:calc(100% - 34px); position:relative; background:#071215; }
+    svg { width:100%; height:100%; display:block; }
+    .grid-line { stroke:#163039; stroke-width:1; }
+    .site-border { fill:none; stroke:#46636b; stroke-width:1.5; stroke-dasharray:5 5; }
+    .search-path { fill:none; stroke:var(--blue); stroke-width:2; stroke-dasharray:4 4; opacity:.8; }
+    .fov { fill:rgba(69,217,245,.09); stroke:rgba(69,217,245,.55); stroke-width:1; }
+    .coverage { fill:rgba(72,255,189,.025); stroke:none; }
+    .asset-marker { fill:#071013; stroke:var(--cyan); stroke-width:2.4; }
+    .target-marker { fill:var(--mint); stroke:#fff; stroke-width:1.5; filter:drop-shadow(0 0 6px var(--mint)); }
+    .target-marker.predicted { fill:none; stroke:var(--amber); stroke-dasharray:3 3; }
+    .uncertainty { fill:rgba(255,191,105,.08); stroke:var(--amber); stroke-width:1; stroke-dasharray:3 3; }
+    .map-label { fill:#dce9ec; font:700 10px ui-sans-serif,system-ui; paint-order:stroke; stroke:#071013; stroke-width:3px; }
+    .no-map { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); }
+    .target-panel { display:grid; grid-template-columns:1.25fr .75fr; }
+    .target-visual { position:relative; min-width:0; overflow:hidden; background:#020708; }
+    .target-visual img { width:100%; height:100%; object-fit:contain; }
+    .target-badge { position:absolute; top:8px; left:8px; padding:4px 8px; border:1px solid currentColor; border-radius:3px; background:#071013d9; font-weight:800; letter-spacing:.1em; }
+    .target-info { border-left:1px solid var(--line); padding:9px; display:flex; flex-direction:column; gap:7px; }
+    .target-info .row { display:flex; justify-content:space-between; gap:8px; color:var(--muted); }
+    .target-info .row b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; text-align:right; }
+    .target-inset { flex:1; min-height:55px; border:1px solid var(--line); background:#071215; }
+    .timeline { grid-column:1 / -1; display:grid; grid-template-columns:230px 1fr; }
+    .health { padding:10px 12px; border-right:1px solid var(--line); overflow:hidden; }
+    .health h3 { margin:0 0 7px; font-size:10px; color:var(--muted); letter-spacing:.12em; text-transform:uppercase; }
+    .health-row { display:flex; justify-content:space-between; margin:5px 0; }
+    .events { display:flex; gap:8px; align-items:stretch; overflow-x:auto; padding:9px; }
+    .event { flex:0 0 190px; border-left:2px solid var(--line); padding:4px 8px; background:#0a1519; }
+    .event time { display:block; color:var(--muted); font-size:9px; }
+    .event b { display:block; margin:3px 0; font-size:10px; color:var(--cyan); letter-spacing:.05em; }
+    .event span { color:#a7bac0; display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .empty { color:var(--muted); font-style:italic; }
+    @media (max-width: 1050px) {
+      main { grid-template-columns:1.7fr 1fr; }
+      .headline .metric:nth-child(n+4) { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><div class="brand-mark"></div><div><b>WHITEOUT</b><span>MISSION CONTROL</span></div></div>
+    <div class="headline">
+      <div class="metric"><label>Mission</label><strong id="mission-mode">SEARCH</strong></div>
+      <div class="metric"><label>Target</label><strong id="target-state">NONE</strong></div>
+      <div class="metric"><label>Observed by</label><strong id="target-sensor">—</strong></div>
+      <div class="metric"><label>Uncertainty</label><strong id="uncertainty">—</strong></div>
+      <div class="metric"><label>Submission</label><strong id="submission">DISABLED</strong></div>
+    </div>
+    <div id="replay-controls">
+      <button id="play-button">Pause</button>
+      <select id="speed"><option>.5</option><option selected>1</option><option>2</option><option>4</option></select>
+      <span id="replay-time">0:00 / 0:00</span>
+    </div>
+    <div class="chip"><span class="dot" id="socket-dot"></span><span id="socket-label">connecting</span></div>
+  </header>
+
+  <main>
+    <section class="camera-grid" id="camera-grid"></section>
+    <aside class="side">
+      <section class="panel">
+        <div class="panel-title"><span>Tactical overview · EPSG:3413 metres</span><span id="site-name">SITE UNKNOWN</span></div>
+        <div class="map-wrap"><svg id="tactical-map" viewBox="0 0 900 600" preserveAspectRatio="none"></svg><div class="no-map" id="no-map">Awaiting site metadata</div></div>
+      </section>
+      <section class="panel target-panel">
+        <div class="target-visual"><img src="/video/target" alt="Best available target crop"><span class="target-badge" id="target-badge">NO TARGET</span></div>
+        <div class="target-info">
+          <div class="row"><span>Position</span><b id="target-position">—</b></div>
+          <div class="row"><span>Heading</span><b id="target-heading">—</b></div>
+          <div class="row"><span>Age</span><b id="target-age">—</b></div>
+          <svg class="target-inset" id="target-inset" viewBox="0 0 240 100"></svg>
+        </div>
+      </section>
+    </aside>
+    <section class="panel timeline">
+      <div class="health"><h3>System health</h3><div id="health-list"></div></div>
+      <div class="events" id="events"><span class="empty">Awaiting mission events</span></div>
+    </section>
+  </main>
+
+  <script>
+    const CAMERAS = ['quadcopter','fixed-wing','tower-1','tower-2'];
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const age = value => value == null ? '—' : value < 1 ? `${Math.round(value*1000)}ms` : `${value.toFixed(1)}s`;
+    const fmtTime = seconds => { seconds=Math.max(0,seconds||0); return `${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`; };
+    const cssState = value => String(value||'').toLowerCase();
+    let socket, latest, replayPlaying=true;
+
+    function cameraCards() {
+      document.getElementById('camera-grid').innerHTML = CAMERAS.map(name => `
+        <article class="camera-card" id="card-${name}">
+          <img src="/video/${name}" alt="${name} camera">
+          <div class="camera-head"><span class="camera-name">${name.toUpperCase()}</span><span class="camera-meta"><span id="fps-${name}">0 FPS</span><span id="age-${name}">OFFLINE</span></span></div>
+          <div class="camera-foot"><span class="activity" id="activity-${name}">IDLE</span><span class="assignment" id="assignment-${name}">awaiting data</span></div>
+        </article>`).join('');
+    }
+
+    function boundsFor(state) {
+      if (state.site?.bounds3413) return state.site.bounds3413;
+      const points = Object.values(state.assets||{}).map(a=>a.projected).filter(Boolean);
+      if (state.target?.track) points.push({x_m:state.target.track.x_m,y_m:state.target.track.y_m});
+      if (!points.length) return null;
+      const xs=points.map(p=>p.x_m), ys=points.map(p=>p.y_m), pad=800;
+      return [Math.min(...xs)-pad,Math.min(...ys)-pad,Math.max(...xs)+pad,Math.max(...ys)+pad];
+    }
+
+    function tacticalMap(state) {
+      const svg=document.getElementById('tactical-map'), noMap=document.getElementById('no-map');
+      const bounds=boundsFor(state); if(!bounds){svg.innerHTML='';noMap.style.display='flex';return;} noMap.style.display='none';
+      const [xmin,ymin,xmax,ymax]=bounds, W=900,H=600;
+      const pt=(x,y)=>[(x-xmin)/(xmax-xmin)*W,H-(y-ymin)/(ymax-ymin)*H];
+      const polygon=(values)=>values.map(p=>pt(Number(p[0]),Number(p[1])).join(',')).join(' ');
+      let h='<rect width="900" height="600" fill="#071215"/>';
+      for(let i=1;i<10;i++)h+=`<line class="grid-line" x1="${i*90}" y1="0" x2="${i*90}" y2="600"/><line class="grid-line" x1="0" y1="${i*60}" x2="900" y2="${i*60}"/>`;
+      h+='<rect class="site-border" x="2" y="2" width="896" height="596"/>';
+      Object.values(state.assets||{}).forEach(asset=>{
+        (asset.coverage||[]).forEach(poly=>{if(poly.length>2)h+=`<polygon class="coverage" points="${polygon(poly)}"/>`;});
+        if((asset.fov_footprint||[]).length>2)h+=`<polygon class="fov" points="${polygon(asset.fov_footprint)}"/>`;
+        if((asset.search_path||[]).length>1)h+=`<polyline class="search-path" points="${polygon(asset.search_path)}"/>`;
+        if(asset.projected){const [x,y]=pt(asset.projected.x_m,asset.projected.y_m);h+=`<circle class="asset-marker" cx="${x}" cy="${y}" r="7"/><text class="map-label" x="${x+11}" y="${y+4}">${esc(asset.name)}</text>`;}
+      });
+      const target=state.target?.track;
+      if(target && state.target.status!=='LOST'){
+        const [x,y]=pt(target.x_m,target.y_m), radius=Math.max(5,target.display_uncertainty_m/(xmax-xmin)*W);
+        h+=`<circle class="uncertainty" cx="${x}" cy="${y}" r="${radius}"/><circle class="target-marker ${state.target.status==='PREDICTED'?'predicted':''}" cx="${x}" cy="${y}" r="8"/><text class="map-label" x="${x+13}" y="${y+4}">SIERRA ONE · ${esc(state.target.status)}</text>`;
+      }
+      svg.innerHTML=h;
+      targetInset(state,bounds,pt);
+    }
+
+    function targetInset(state,bounds) {
+      const svg=document.getElementById('target-inset'), target=state.target?.track;
+      if(!target){svg.innerHTML='<text x="120" y="53" text-anchor="middle" fill="#789097" font-size="10">NO TRACK</text>';return;}
+      const cx=target.x_m,cy=target.y_m, radius=350, p=(x,y)=>[120+(x-cx)/radius*105,50-(y-cy)/radius*42];
+      let h='<rect width="240" height="100" fill="#071215"/><circle cx="120" cy="50" r="35" class="uncertainty"/>';
+      Object.values(state.assets||{}).forEach(a=>{if(a.projected){const [x,y]=p(a.projected.x_m,a.projected.y_m);if(x>-10&&x<250&&y>-10&&y<110)h+=`<circle cx="${x}" cy="${y}" r="4" class="asset-marker"/>`;}});
+      h+=`<circle cx="120" cy="50" r="6" class="target-marker ${state.target.status==='PREDICTED'?'predicted':''}"/>`;
+      svg.innerHTML=h;
+    }
+
+    function render(state) {
+      latest=state;
+      const mode=state.mission?.mode||'SEARCH', targetState=state.target?.status||'NONE';
+      const modeEl=document.getElementById('mission-mode'); modeEl.textContent=mode; modeEl.className=cssState(mode);
+      const targetEl=document.getElementById('target-state'); targetEl.textContent=targetState; targetEl.className=cssState(targetState);
+      document.getElementById('target-sensor').textContent=state.target?.observed_by||'—';
+      document.getElementById('submission').textContent=state.submission?.status||'UNKNOWN';
+      const track=state.target?.track;
+      document.getElementById('uncertainty').textContent=track?`${track.display_uncertainty_m.toFixed(1)} m`:'—';
+      document.getElementById('target-position').textContent=track?`${track.display_latitude.toFixed(5)}, ${track.display_longitude.toFixed(5)}`:'—';
+      if(track){const heading=(Math.atan2(track.velocity_east_mps,track.velocity_north_mps)*180/Math.PI+360)%360;document.getElementById('target-heading').textContent=(track.velocity_east_mps||track.velocity_north_mps)?`${heading.toFixed(0)}°`:'—';}
+      else document.getElementById('target-heading').textContent='—';
+      document.getElementById('target-age').textContent=age(state.target?.age_s);
+      const badge=document.getElementById('target-badge'); badge.textContent=targetState; badge.className=`target-badge ${cssState(targetState)}`;
+      document.getElementById('site-name').textContent=state.site?.name?.toUpperCase()||'AUTO-FIT';
+      CAMERAS.forEach(name=>{
+        const a=state.assets?.[name]||{};
+        document.getElementById(`fps-${name}`).textContent=`${(a.fps||0).toFixed(1)} FPS`;
+        const ageEl=document.getElementById(`age-${name}`); ageEl.textContent=age(a.frame_age_s); ageEl.className=cssState(a.connection);
+        const act=document.getElementById(`activity-${name}`);act.textContent=a.activity||'IDLE';act.className=`activity ${cssState(a.activity)}`;
+        document.getElementById(`assignment-${name}`).textContent=a.assignment||a.reason||'—';
+      });
+      health(state); events(state.events||[]); tacticalMap(state); replay(state.replay);
+    }
+
+    function health(state) {
+      const rows=CAMERAS.map(name=>{const a=state.assets?.[name]||{};return `<div class="health-row"><span>${name}</span><b class="${cssState(a.connection)}">${a.connection||'OFFLINE'}</b></div>`;});
+      document.getElementById('health-list').innerHTML=rows.join('');
+    }
+
+    function events(items) {
+      const visible=items.slice(-12).reverse();
+      document.getElementById('events').innerHTML=visible.length?visible.map(e=>`<div class="event"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><b>${esc(e.kind)}</b><span>${esc(e.source)} · ${esc(e.payload?.reason||e.payload?.detail||e.payload?.action||'')}</span></div>`).join(''):'<span class="empty">Awaiting mission events</span>';
+    }
+
+    function replay(data) {
+      const controls=document.getElementById('replay-controls'); if(!data){controls.style.display='none';return;} controls.style.display='flex';
+      replayPlaying=data.playing;document.getElementById('play-button').textContent=data.playing?'Pause':'Play';
+      document.getElementById('speed').value=String(data.speed);document.getElementById('replay-time').textContent=`${fmtTime(data.position_s)} / ${fmtTime(data.duration_s)}`;
+    }
+
+    function connect() {
+      socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
+      socket.onopen=()=>{document.getElementById('socket-label').textContent='live';document.getElementById('socket-dot').className='dot online';};
+      socket.onmessage=e=>{const data=JSON.parse(e.data);if(!data.error)render(data);};
+      socket.onclose=()=>{document.getElementById('socket-label').textContent='reconnecting';document.getElementById('socket-dot').className='dot offline';setTimeout(connect,1000);};
+    }
+    document.getElementById('play-button').onclick=()=>socket?.send(JSON.stringify({action:'playing',value:!replayPlaying}));
+    document.getElementById('speed').onchange=e=>socket?.send(JSON.stringify({action:'speed',value:Number(e.target.value)}));
+    cameraCards();connect();
+  </script>
+</body>
+</html>

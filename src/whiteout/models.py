@@ -19,6 +19,24 @@ class Pixel:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundingBox:
+    """Pixel-aligned target bounds using inclusive top-left/exclusive bottom-right edges."""
+
+    x_min: float
+    y_min: float
+    x_max: float
+    y_max: float
+
+    def __post_init__(self) -> None:
+        if self.x_max <= self.x_min or self.y_max <= self.y_min:
+            raise ValueError("bounding box must have positive width and height")
+
+    @property
+    def center(self) -> Pixel:
+        return Pixel((self.x_min + self.x_max) / 2.0, (self.y_min + self.y_max) / 2.0)
+
+
+@dataclass(frozen=True, slots=True)
 class Detection:
     camera: str
     pixel: Pixel
@@ -26,6 +44,7 @@ class Detection:
     timestamp: datetime = field(default_factory=utc_now)
     label: str = "target"
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    bbox: BoundingBox | None = None
 
 
 @dataclass(frozen=True, slots=True)
