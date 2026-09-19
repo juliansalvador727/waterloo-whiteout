@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,6 +76,7 @@ class DashboardStateTests(unittest.TestCase):
         self.assertEqual(asset["assignment"], "sector alpha")
         self.assertEqual(asset["detections"][0]["bbox"]["x_min"], 80)
         self.assertIsNotNone(asset["projected"])
+        self.assertEqual(store.snapshot(now=self.now)["target"]["source_camera"], "quadcopter")
 
     def test_arctic_projection_matches_reported_site_bounds(self) -> None:
         x_m, y_m = project_3413(71.99196, -94.822428)
@@ -93,9 +95,75 @@ class DashboardStateTests(unittest.TestCase):
             MissionStateStore(camera_names=("quadcopter",)), mode="live", config=config
         )
 
+        snapshot = runtime.snapshot()
+        self.assertEqual(snapshot["assets"]["quadcopter"]["camera_hfov_deg"], 90.0)
         self.assertEqual(
-            runtime.snapshot()["assets"]["quadcopter"]["camera_hfov_deg"], 90.0
+            snapshot["assets"]["quadcopter"]["camera_endpoint"],
+            "127.0.0.1:8600/stream",
         )
+        self.assertEqual(snapshot["runtime"]["sim_host"], "127.0.0.1")
+
+    def test_map_metadata_does_not_block_live_readers(self) -> None:
+        from whiteout.config import config_from_mapping
+
+        runtime = DashboardRuntime(
+            MissionStateStore(camera_names=()),
+            mode="live",
+            config=config_from_mapping({"cameras": [], "mavlink": []}),
+        )
+        fetch_started = threading.Event()
+        release_fetch = threading.Event()
+
+        def blocked_fetch() -> None:
+            fetch_started.set()
+            release_fetch.wait(timeout=1.0)
+
+        runtime._fetch_site = blocked_fetch  # type: ignore[method-assign]
+        runtime.start_live()
+        try:
+            self.assertTrue(fetch_started.wait(timeout=0.2))
+        finally:
+            release_fetch.set()
+            for thread in runtime._threads:
+                thread.join(timeout=1.0)
+
+
+class DashboardFrontendTests(unittest.TestCase):
+    def test_map_import_cannot_block_camera_bootstrap(self) -> None:
+        index = (
+            Path(__file__).parents[1]
+            / "src"
+            / "whiteout"
+            / "dashboard"
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("import * as maplibregl", index)
+        self.assertIn("await import('/static/maplibre-gl.mjs')", index)
+        self.assertLess(
+            index.rindex("cameraCards();connect();"),
+            index.rindex("initializeMap();"),
+        )
+
+    def test_camera_marker_anchor_and_selection_use_the_cone_geometry(self) -> None:
+        index = (
+            Path(__file__).parents[1]
+            / "src"
+            / "whiteout"
+            / "dashboard"
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("element.dataset.label=asset.name", index)
+        self.assertIn("CAMERA_COLORS[asset.name]", index)
+        self.assertNotIn("element.textContent=asset.name", index)
+        self.assertIn("if(fly&&mapReady)fitCameraCone(name)", index)
+        self.assertIn("const coordinates=cameraConeCoordinates", index)
+        self.assertNotIn('data-map-mode="topo"', index)
+        fit_map = index[index.index("function fitMap()") : index.index("function updateMap(state)")]
+        self.assertIn("setFollow(false)", fit_map)
 
 
 class DashboardRecordingTests(unittest.TestCase):
@@ -155,6 +223,61 @@ class DashboardRecordingTests(unittest.TestCase):
             )
             self.assertEqual(snapshot["target"]["observed_by"], "tower-1")
             self.assertIsNotNone(replay.store.latest_frame("tower-1"))
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("pyproj"),
+    "dashboard map projection dependency is not installed",
+)
+class DashboardMapTests(unittest.TestCase):
+    def test_map_config_uses_existing_site_api_and_public_sources(self) -> None:
+        import io
+
+        from whiteout.dashboard.map import MapAssets
+        from whiteout.dashboard.state import project_3413
+
+        latitude, longitude = 71.99196, -94.822428
+        centre_x, centre_y = project_3413(latitude, longitude)
+        metadata = {
+            "ok": True,
+            "name": "test-site",
+            "centre": {"lat": latitude, "lon": longitude},
+            "bounds3413": {
+                "xmin": centre_x - 1000,
+                "ymin": centre_y - 1000,
+                "xmax": centre_x + 1000,
+                "ymax": centre_y + 1000,
+            },
+            "extent_m": 2000.0,
+        }
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+        def opener(url: str, **_kwargs):
+            self.assertEqual(url, "http://sim.invalid:8090/api/site")
+            return Response(json.dumps(metadata).encode())
+
+        assets = MapAssets("sim.invalid", opener=opener)
+        config = assets.config()
+
+        self.assertEqual(config["name"], "test-site")
+        self.assertEqual(config["center"], [longitude, latitude])
+        self.assertLess(config["bounds"][0], longitude)
+        self.assertGreater(config["bounds"][2], longitude)
+        self.assertEqual(len(config["boundary"]), 5)
+        self.assertEqual(config["boundary"][0], config["boundary"][-1])
+        self.assertEqual(config["dimensions_m"]["width"], 2000.0)
+        self.assertEqual(config["dimensions_m"]["height"], 2000.0)
+        self.assertEqual(config["dimensions_m"]["area_km2"], 4.0)
+        self.assertIn("World_Imagery", config["imagery_tiles"][0])
+        self.assertNotIn("topo_tiles", config)
+        self.assertIn("mapterhorn.com", config["terrain_tiles"][0])
+        self.assertEqual(config["terrain_encoding"], "terrarium")
 
 
 @unittest.skipUnless(importlib.util.find_spec("fastapi"), "dashboard extra is not installed")

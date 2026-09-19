@@ -33,7 +33,7 @@ whiteout-dashboard = "whiteout.dashboard.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"whiteout.dashboard" = ["static/*.html"]
+"whiteout.dashboard" = ["static/*"]
 
 [tool.unittest]
 start-directory = "tests"

@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import threading
 import time
 import urllib.request
@@ -14,8 +15,12 @@ from typing import Any, AsyncIterator
 from ..camera import CameraFrame, MjpegCamera
 from ..config import AppConfig, load_config
 from ..mavlink import MavlinkUnavailable, ReadOnlyMavlink
+from .map import MapAssets, MapAssetsUnavailable
 from .recording import SessionRecorder, SessionReplay
 from .state import MissionStateStore, SiteMetadata
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class DashboardDependencyError(RuntimeError):
@@ -37,6 +42,7 @@ class DashboardRuntime:
         self.mode = mode
         self.config = config
         self.replay = replay
+        self.map_assets = MapAssets(config.sim_host) if config is not None else None
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._replay_task: asyncio.Task[None] | None = None
@@ -60,12 +66,19 @@ class DashboardRuntime:
             for name, asset in state["assets"].items():
                 camera = cameras.get(name)
                 asset["camera_hfov_deg"] = camera.hfov_deg if camera is not None else None
+                if camera is not None:
+                    asset["camera_endpoint"] = (
+                        f"{self.config.sim_host}:{camera.port}{camera.path}"
+                    )
+            state["runtime"] = {"mode": self.mode, "sim_host": self.config.sim_host}
+        else:
+            state["runtime"] = {"mode": self.mode, "sim_host": None}
         return state
 
     def start_live(self) -> None:
         if self.config is None:
             raise RuntimeError("live runtime requires configuration")
-        self._fetch_site()
+        logger.info("Dashboard simulator host: %s", self.config.sim_host)
         for camera_config in self.config.cameras:
             thread = threading.Thread(
                 target=self._camera_worker,
@@ -75,6 +88,15 @@ class DashboardRuntime:
             )
             thread.start()
             self._threads.append(thread)
+        # Site metadata only drives the map. Fetch it independently so an
+        # unavailable control endpoint cannot delay camera or telemetry input.
+        thread = threading.Thread(
+            target=self._fetch_site,
+            name="site-metadata",
+            daemon=True,
+        )
+        thread.start()
+        self._threads.append(thread)
         for mavlink_config in self.config.mavlink:
             thread = threading.Thread(
                 target=self._telemetry_worker,
@@ -111,6 +133,7 @@ class DashboardRuntime:
             )
         except (OSError, TimeoutError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             # Camera operation remains useful; the UI clearly reports missing site bounds.
+            logger.warning("Simulator site metadata unavailable at %s", url)
             return
 
     def _camera_worker(self, name: str, port: int, path: str) -> None:
@@ -233,7 +256,7 @@ def _annotated_jpeg(store: MissionStateStore, camera: str) -> bytes | None:
     else:
         frame = store.latest_frame(camera)
         if frame is None:
-            image = placeholder("WAITING FOR CAMERA")
+            image = placeholder("CAMERA FEED OFFLINE")
         else:
             image = _decode_frame(frame)
         if image is None:
@@ -309,6 +332,20 @@ def create_app(runtime: DashboardRuntime):
         path = files("whiteout.dashboard").joinpath("static/index.html")
         return FileResponse(str(path))
 
+    @app.get("/static/{asset}")
+    async def static_asset(asset: str):
+        allowed = {
+            "maplibre-gl.css",
+            "maplibre-gl.mjs",
+            "maplibre-gl-shared.mjs",
+            "maplibre-gl-worker.mjs",
+            "MAPLIBRE-LICENSE.txt",
+        }
+        if asset not in allowed:
+            raise HTTPException(status_code=404, detail="unknown static asset")
+        path = files("whiteout.dashboard").joinpath(f"static/{asset}")
+        return FileResponse(str(path))
+
     @app.get("/health")
     async def health():
         return {"ok": True, "mode": runtime.mode, "sequence": runtime.snapshot()["sequence"]}
@@ -316,6 +353,16 @@ def create_app(runtime: DashboardRuntime):
     @app.get("/api/state")
     async def api_state():
         return JSONResponse(runtime.snapshot())
+
+    @app.get("/api/map/config")
+    async def map_config():
+        if runtime.map_assets is None:
+            raise HTTPException(status_code=404, detail="map is unavailable in this mode")
+        try:
+            config = await asyncio.to_thread(runtime.map_assets.config)
+        except MapAssetsUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return JSONResponse(config)
 
     @app.get("/video/{camera}")
     async def video(camera: str):

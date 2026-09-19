@@ -267,7 +267,7 @@ The built-in placeholder pipeline can process a bounded camera sample with `whit
 
 ## Unified mission dashboard
 
-The dashboard targets one 1080p operator display. It combines all four camera feeds, connection and activity state, a tactical EPSG:3413 map, target confidence overlays, a best-target crop, observed-versus-predicted track state, and an event timeline. Its local HTML, CSS, and JavaScript have no external tile or CDN dependency.
+The dashboard targets one 1080p operator display. It combines all four camera feeds, connection and activity state, a MapLibre camera map, target confidence overlays, a best-target crop, observed-versus-predicted track state, and an event timeline. The map reads the existing simulator `/api/site` endpoint for the active site's centre and bounds; it does not require changes to the simulator service. Imagery uses an Esri public raster basemap, while 3D relief uses Mapterhorn terrain. The MapLibre runtime is bundled locally, but the browser needs public internet access to load those map tiles. If it cannot reach them, live camera, target, and FOV overlays continue on the fallback map background.
 
 Install and start a live read-only dashboard with explicit network confirmation:
 
@@ -293,3 +293,15 @@ The standalone dashboard owns only camera ingestion. A central mission process c
 - `update_track(...)`, `update_recommendation(...)`, and `update_submission(...)` for integration state.
 
 Search paths, FOV footprints, and accumulated coverage polygons use `(x, y)` pairs in EPSG:3413 metres. The dashboard will not draw a camera footprint unless the integration layer supplies one from calibrated pose and orientation data. Detection confidence heat is labelled as model analysis and is not presented as infrared imagery.
+
+The map's heading sectors use each platform's MAVLink heading and configured horizontal FOV. They communicate camera direction but are not calibrated ground footprints. Selecting a camera links its feed and map marker; when a target is detected, the target panel names the source camera and the map draws its line of sight to the tracked vessel.
+
+For simulator-only evaluation, compare the dashboard's current estimate with the vessel's Gazebo ground truth and optionally record both to JSONL:
+
+```text
+python scripts/truth_vessel.py --host 10.99.0.1 --confirm-network \
+  --compare-url http://127.0.0.1:8070/api/state \
+  --jsonl recordings/truth.jsonl
+```
+
+This is a development accuracy check, not an input to detection or tracking. Direct simulator ground truth must not be used where challenge rules prohibit it.

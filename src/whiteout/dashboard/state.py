@@ -459,10 +459,16 @@ class MissionStateStore:
                 }
 
             status, target_age = self._target_status(current)
+            target_frame = self.best_target_frame()
             target: dict[str, Any] = {
                 "status": status.value,
                 "age_s": target_age,
                 "observed_by": self._observed_by,
+                "source_camera": (
+                    target_frame[0].camera
+                    if target_frame is not None and target_age is not None and target_age < 2.0
+                    else None
+                ),
                 "observed_at": _iso(self._observed_at),
                 "track": None,
             }
