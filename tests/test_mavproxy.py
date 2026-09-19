@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import os
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -8,9 +10,19 @@ from whiteout.mavproxy import MavProxyNotRunning, MavProxySession, MavProxyUnava
 from whiteout.objects import Boat, Copter, Tower, UnsupportedCommand
 
 
+class _FakeStdin(io.StringIO):
+    def __init__(self) -> None:
+        super().__init__()
+        self.was_closed = False
+
+    def close(self) -> None:
+        self.was_closed = True
+
+
 class _FakeProcess:
     def __init__(self) -> None:
-        self.stdin = io.StringIO()
+        self.stdin = _FakeStdin()
+        self.stdout = None
         self.returncode: int | None = None
         self.terminated = False
         self.killed = False
@@ -46,9 +58,20 @@ class MavProxyTests(unittest.TestCase):
             session.close()
 
         arguments = popen.call_args.args[0]
+        expected_launcher = (
+            (sys.executable, "-u", "-m", "whiteout._mavproxy_headless", "C:/bin/mavproxy.py")
+            if os.name == "nt"
+            else ("C:/bin/mavproxy.py",)
+        )
         self.assertEqual(
             arguments,
-            ("C:/bin/mavproxy.py", "--master=udpout:sim.example:14550"),
+            (
+                *expected_launcher,
+                "--master=udpout:sim.example:14550",
+                "--no-console",
+                "--no-state",
+                "--default-modules=wp,param,arm,mode,rc,misc,cmdlong,battery",
+            ),
         )
         self.assertFalse(popen.call_args.kwargs.get("shell", False))
         self.assertEqual(
@@ -65,7 +88,10 @@ class MavProxyTests(unittest.TestCase):
             tower = Tower.two("arctic.example")
             with tower.mavproxy_session() as session:
                 session.send(tower.pan(1200))
-        self.assertEqual(process.stdin.getvalue(), "module load servo\nservo set 1 1200\nexit\n")
+        self.assertEqual(
+            process.stdin.getvalue(),
+            "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0\nexit\n",
+        )
 
     def test_missing_mavproxy_has_clear_install_message(self) -> None:
         with patch("whiteout.mavproxy.shutil.which", return_value=None):
@@ -81,6 +107,27 @@ class MavProxyTests(unittest.TestCase):
             Boat().mavproxy_session()
         with self.assertRaises(MavProxyNotRunning):
             Copter().mavproxy_session().send("status")
+
+    def test_non_interactive_commands_use_mavproxy_cmd_arguments(self) -> None:
+        session = Tower.one().mavproxy_session(
+            startup_commands=("status",),
+            non_interactive=True,
+        )
+        self.assertIn("--non-interactive", session.arguments)
+        self.assertIn("--no-state", session.arguments)
+        self.assertIn("--cmd=status", session.arguments)
+
+    def test_windows_non_interactive_launcher_uses_headless_bootstrap(self) -> None:
+        session = Copter().mavproxy_session(non_interactive=True)
+        with patch("whiteout.mavproxy.shutil.which", return_value="C:/bin/mavproxy.py"):
+            launcher = session._resolve_launcher()
+        if os.name == "nt":
+            self.assertEqual(
+                launcher,
+                (sys.executable, "-u", "-m", "whiteout._mavproxy_headless", "C:/bin/mavproxy.py"),
+            )
+        else:
+            self.assertEqual(launcher, ("C:/bin/mavproxy.py",))
 
 
 if __name__ == "__main__":

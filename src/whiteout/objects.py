@@ -15,6 +15,7 @@ import shlex
 from typing import TYPE_CHECKING, ClassVar, Sequence
 
 if TYPE_CHECKING:
+    from .control import CopterController, PlaneController, TowerController
     from .mavproxy import MavProxySession
 
 
@@ -110,6 +111,8 @@ class RepositoryObject:
         *,
         executable: str = "mavproxy.py",
         extra_arguments: Sequence[str] = (),
+        startup_commands: Sequence[MavProxyCommand | str] = (),
+        non_interactive: bool = False,
     ) -> MavProxySession:
         """Create, but do not start, a MAVProxy session for this object."""
         if not self.bundled:
@@ -124,7 +127,9 @@ class RepositoryObject:
             extra_arguments=extra_arguments,
             startup_commands=tuple(
                 f"module load {module}" for module in self.required_mavproxy_modules
-            ),
+            )
+            + tuple(startup_commands),
+            non_interactive=non_interactive,
         )
 
     def connect_mavproxy(
@@ -132,11 +137,15 @@ class RepositoryObject:
         *,
         executable: str = "mavproxy.py",
         extra_arguments: Sequence[str] = (),
+        startup_commands: Sequence[MavProxyCommand | str] = (),
+        non_interactive: bool = False,
     ) -> MavProxySession:
         """Launch MAVProxy using arctic-sim's required ``udpout`` endpoint."""
         session = self.mavproxy_session(
             executable=executable,
             extra_arguments=extra_arguments,
+            startup_commands=startup_commands,
+            non_interactive=non_interactive,
         )
         return session.start()
 
@@ -204,6 +213,18 @@ class Copter(RepositoryObject):
         {"STABILIZE", "LOITER", "GUIDED", "AUTO", "RTL", "LAND"}
     )
 
+    def controller(
+        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0
+    ) -> CopterController:
+        """Create a typed Python controller backed by MAVProxy."""
+        from .control import CopterController
+
+        return CopterController(
+            self,
+            executable=executable,
+            connection_timeout_s=connection_timeout_s,
+        )
+
     def takeoff(self, altitude_m: float) -> MavProxyCommand:
         altitude = _finite_number(altitude_m, "takeoff altitude")
         if altitude <= 0:
@@ -251,8 +272,20 @@ class Plane(RepositoryObject):
 
     object_type: ClassVar[ObjectType] = ObjectType.PLANE
     supported_modes: ClassVar[frozenset[str]] = frozenset(
-        {"MANUAL", "FBWA", "AUTO", "RTL", "LOITER", "CIRCLE"}
+        {"MANUAL", "FBWA", "TAKEOFF", "AUTO", "RTL", "LOITER", "CIRCLE"}
     )
+
+    def controller(
+        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0
+    ) -> PlaneController:
+        """Create a typed Python controller backed by MAVProxy."""
+        from .control import PlaneController
+
+        return PlaneController(
+            self,
+            executable=executable,
+            connection_timeout_s=connection_timeout_s,
+        )
 
     def set_speed(self, speed_mps: float) -> MavProxyCommand:
         speed = _finite_number(speed_mps, "speed")
@@ -283,7 +316,6 @@ class Tower(RepositoryObject):
     object_type: ClassVar[ObjectType] = ObjectType.TOWER
     supported_modes: ClassVar[frozenset[str]] = frozenset({"MANUAL", "AUTO"})
     supports_arming: ClassVar[bool] = False
-    required_mavproxy_modules: ClassVar[tuple[str, ...]] = ("servo",)
 
     @classmethod
     def one(cls, host: str = "127.0.0.1") -> Tower:
@@ -296,13 +328,37 @@ class Tower(RepositoryObject):
     def servo(self, servo_number: int, pwm: int) -> MavProxyCommand:
         if servo_number not in (1, 2):
             raise ValueError("tower servo must be 1 (pan) or 2 (tilt)")
-        return MavProxyCommand("servo", ("set", str(servo_number), str(_pwm(pwm))))
+        return MavProxyCommand(
+            "cmdlong",
+            (
+                "MAV_CMD_DO_SET_SERVO",
+                str(servo_number),
+                str(_pwm(pwm)),
+                "0",
+                "0",
+                "0",
+                "0",
+                "0",
+            ),
+        )
 
     def pan(self, pwm: int) -> MavProxyCommand:
         return self.servo(1, pwm)
 
     def tilt(self, pwm: int) -> MavProxyCommand:
         return self.servo(2, pwm)
+
+    def controller(
+        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0
+    ) -> TowerController:
+        """Create a typed Python controller backed by MAVProxy."""
+        from .control import TowerController
+
+        return TowerController(
+            self,
+            executable=executable,
+            connection_timeout_s=connection_timeout_s,
+        )
 
     def automatic_mission(self, path: str) -> tuple[MavProxyCommand, ...]:
         raise UnsupportedCommand("missions are not defined for the repository towers")
