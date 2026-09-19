@@ -50,28 +50,47 @@ The flat-water estimator is intentionally local and approximate. Camera calibrat
 pip install -e ".[mavproxy]"
 ```
 
-```python
-from whiteout.objects import Copter, Tower
-
-copter = Copter(host="sim.example")
-print(copter.mavproxy_start_command())  # mavproxy.py --master=udpout:sim.example:14550
-print(copter.mode("GUIDED"))            # mode GUIDED
-print(copter.takeoff(20))               # takeoff 20
-
-tower_command = Tower.two().pan(1200)
-```
-
-To transmit commands, explicitly open a MAVProxy session. The subprocess uses an argument vector rather than a shell and connects in `udpout` mode, as required by arctic-sim's `udpin` endpoints:
+The normal public API is a set of typed Python controllers. They start MAVProxy, wait for the vehicle heartbeat, validate arguments, and transmit internally; application code does not need to build console strings:
 
 ```python
-copter = Copter(host="localhost")
-with copter.mavproxy_session() as mavproxy:
-    mavproxy.send(copter.mode("GUIDED"))
-    mavproxy.send(copter.arm())
-    mavproxy.send(copter.takeoff(20))
+from whiteout import Copter, CopterMode, Plane, PlaneMode, Tower
+
+with Copter(host="10.99.0.1").controller() as copter:
+    copter.set_mode(CopterMode.GUIDED)
+    copter.arm()
+    copter.takeoff(10)
+    copter.autoland()
+
+with Plane(host="10.99.0.1").controller() as plane:
+    plane.set_mode(PlaneMode.LOITER)
+
+with Tower.one("10.99.0.1").controller() as tower:
+    tower.pan(1200)
+    tower.tilt(1700)
 ```
 
-The `Boat` class records the reserved ArduRover-based boat role, but its `bundled` flag is false because arctic-sim does not currently include that model. A boat session therefore cannot be opened. Towers do not expose arming, and their sessions automatically load MAVProxy's optional `servo` module for `pan()` and `tilt()`. Unsupported modes and out-of-range PWM values raise an error before a command is transmitted.
+`CopterMode` and `PlaneMode` are separate enums, so plane-only and copter-only modes cannot be mixed accidentally. Towers do not expose arming. Their pan and tilt methods use MAVProxy's built-in `cmdlong` command with `MAV_CMD_DO_SET_SERVO`; no unavailable third-party servo module is required. Unsupported modes and out-of-range PWM values raise an error before transmission. Low-level `MavProxyCommand` builders remain available for unusual commands, but are not needed for normal control.
+
+For a bounded Python test flight, install `whiteout[mavproxy]`, start arctic-sim, and run one of these. The required flag is deliberate because these commands arm and move the simulated aircraft:
+
+```text
+python scripts/test_fly.py quadcopter --confirm-flight
+python scripts/test_fly.py fixed-wing --confirm-flight
+```
+
+The quadcopter enters GUIDED mode, takes off to 10 m, holds for 15 seconds, then enters LAND mode. The fixed-wing enters TAKEOFF mode, climbs for 45 seconds, applies the simulator's gentle belly-landing flare profile, uploads `missions/arctic_sim_fixed_wing_land.waypoints`, waits for MAVProxy to confirm the upload, and enters AUTO. Both flows poll MAVProxy's heartbeat and exit as soon as automatic disarm is confirmed; zero throttle alone is not treated as completion. The fixed-wing then returns to MANUAL and clears the landing mission, which prevents ArduPlane's `In landing sequence` pre-arm rejection on the next flight. Use `--altitude-m`, `--hold-seconds`, and `--landing-timeout-seconds` to change the bounded defaults.
+
+The included fixed-wing mission uses the default arctic-sim runway declared by `ASSET_3` in arctic-sim's `.env.example`, with its final approach rotated 10 degrees clockwise from the original runway vector when viewed from above. If the fixed-wing spawn/runway changes, supply a matching QGC WPL mission with `--landing-mission PATH`; do not reuse the default coordinates at another site.
+
+The `Boat` class records the reserved boat role, but its `bundled` flag is false because arctic-sim does not currently include that model. A boat session therefore cannot be opened.
+
+`whiteout.ARCTIC_SIM_FLEET` provides the live deployment endpoints at `10.99.0.1` in this fixed order: quadcopter, fixed-wing, tower-1, tower-2. Its MAVProxy commands use ports 14550, 14560, 14580, and 14590; the paired camera streams use ports 8600, 8610, 8630, and 8640 with path `/stream`.
+
+The ordinary unit suite verifies the exact commands, URLs, and ordering without network access. To additionally smoke-test the four live camera streams and launch MAVProxy against all four assets, run:
+
+```text
+WHITEOUT_LIVE_ARCTIC_SIM=1 PYTHONPATH=src python -m unittest tests.test_arctic_sim -v
+```
 
 ## Detector integration
 

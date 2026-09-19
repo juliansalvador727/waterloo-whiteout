@@ -48,8 +48,14 @@ class ObjectTests(unittest.TestCase):
         self.assertEqual(str(copter.velocity(2, 0, 0)), "velocity 2 0 0")
 
         tower = Tower.two()
-        self.assertEqual(str(tower.pan(1200)), "servo set 1 1200")
-        self.assertEqual(str(tower.tilt(1700)), "servo set 2 1700")
+        self.assertEqual(
+            str(tower.pan(1200)),
+            "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0",
+        )
+        self.assertEqual(
+            str(tower.tilt(1700)),
+            "cmdlong MAV_CMD_DO_SET_SERVO 2 1700 0 0 0 0 0",
+        )
         with self.assertRaises(UnsupportedCommand):
             tower.arm()
 
