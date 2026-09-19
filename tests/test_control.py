@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -73,12 +74,58 @@ class TypedControllerTests(unittest.TestCase):
             [str(command) for command in commands[:3]],
             ["mode TAKEOFF", "arm throttle", "mode LOITER"],
         )
-        self.assertEqual(commands[3].name, "wp")
-        self.assertEqual(commands[3].arguments, ("load", str(LANDING_MISSION)))
-        self.assertEqual(str(commands[4]), "mode AUTO")
+        self.assertEqual(
+            [str(command) for command in commands[3:7]],
+            [
+                "param set LAND_PITCH_DEG 4",
+                "param set LAND_FLARE_ALT 4",
+                "param set LAND_FLARE_SEC 3",
+                "param set TECS_LAND_SINK 0.2",
+            ],
+        )
+        self.assertEqual(commands[7].name, "wp")
+        self.assertEqual(commands[7].arguments, ("load", str(LANDING_MISSION)))
+        self.assertEqual(str(commands[8]), "mode AUTO")
         session.wait_for_output.assert_any_call(
             "Sent all ", timeout=15.0, start=len("online system 1")
         )
+
+    def test_plane_resets_landing_sequence_only_after_disarm(self) -> None:
+        controller, session = self.controller_for(Plane())
+        with patch.object(controller, "is_armed", return_value=False):
+            controller.reset_after_landing()
+        self.assertEqual(
+            [str(call.args[0]) for call in session.send.call_args_list],
+            ["mode MANUAL", "wp clear"],
+        )
+
+        session.send.reset_mock()
+        with (
+            patch.object(controller, "is_armed", return_value=True),
+            self.assertRaisesRegex(RuntimeError, "while the plane is armed"),
+        ):
+            controller.reset_after_landing()
+        session.send.assert_not_called()
+
+    def test_wait_until_disarmed_exits_on_first_disarmed_heartbeat(self) -> None:
+        controller, _ = self.controller_for(Plane())
+        with (
+            patch.object(controller, "is_armed", side_effect=(True, True, False)) as armed,
+            patch("whiteout.control.time.sleep") as sleep,
+        ):
+            controller.wait_until_disarmed(timeout_s=30, poll_interval_s=1)
+        self.assertEqual(armed.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_landing_final_approach_is_rotated_ten_degrees_clockwise(self) -> None:
+        rows = [line.split("\t") for line in LANDING_MISSION.read_text().splitlines()[1:]]
+        threshold_lat, threshold_lon = float(rows[3][8]), float(rows[3][9])
+        touchdown_lat, touchdown_lon = float(rows[4][8]), float(rows[4][9])
+        mean_lat = math.radians((threshold_lat + touchdown_lat) / 2)
+        north = (touchdown_lat - threshold_lat) * 111_320
+        east = (touchdown_lon - threshold_lon) * 111_320 * math.cos(mean_lat)
+        heading = math.degrees(math.atan2(east, north)) % 360
+        self.assertAlmostEqual(heading, 82.97, places=1)
 
     def test_tower_functions_use_cmdlong_without_optional_servo_module(self) -> None:
         controller, session = self.controller_for(Tower.two())

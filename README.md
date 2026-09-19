@@ -78,9 +78,9 @@ python scripts/test_fly.py quadcopter --confirm-flight
 python scripts/test_fly.py fixed-wing --confirm-flight
 ```
 
-The quadcopter enters GUIDED mode, takes off to 10 m, holds for 15 seconds, then enters LAND mode and keeps MAVProxy open for another 45 seconds. The fixed-wing enters TAKEOFF mode, climbs for 45 seconds, uploads `missions/arctic_sim_fixed_wing_land.waypoints`, waits for MAVProxy to confirm the upload, enters AUTO, and keeps the connection open for 120 seconds while it lands. Use `--altitude-m`, `--hold-seconds`, and `--landing-seconds` to change those bounded defaults.
+The quadcopter enters GUIDED mode, takes off to 10 m, holds for 15 seconds, then enters LAND mode. The fixed-wing enters TAKEOFF mode, climbs for 45 seconds, applies the simulator's gentle belly-landing flare profile, uploads `missions/arctic_sim_fixed_wing_land.waypoints`, waits for MAVProxy to confirm the upload, and enters AUTO. Both flows poll MAVProxy's heartbeat and exit as soon as automatic disarm is confirmed; zero throttle alone is not treated as completion. The fixed-wing then returns to MANUAL and clears the landing mission, which prevents ArduPlane's `In landing sequence` pre-arm rejection on the next flight. Use `--altitude-m`, `--hold-seconds`, and `--landing-timeout-seconds` to change the bounded defaults.
 
-The included fixed-wing mission is aligned to the default arctic-sim runway declared by `ASSET_3` in arctic-sim's `.env.example`. If the fixed-wing spawn/runway changes, supply a matching QGC WPL mission with `--landing-mission PATH`; do not reuse the default coordinates at another site.
+The included fixed-wing mission uses the default arctic-sim runway declared by `ASSET_3` in arctic-sim's `.env.example`, with its final approach rotated 10 degrees clockwise from the original runway vector when viewed from above. If the fixed-wing spawn/runway changes, supply a matching QGC WPL mission with `--landing-mission PATH`; do not reuse the default coordinates at another site.
 
 The `Boat` class records the reserved boat role, but its `bundled` flag is false because arctic-sim does not currently include that model. A boat session therefore cannot be opened.
 

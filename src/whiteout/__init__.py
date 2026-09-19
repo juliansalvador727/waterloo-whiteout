@@ -16,6 +16,7 @@ from .control import (
     PlaneController,
     PlaneMode,
     TowerController,
+    VehicleStateError,
 )
 from .objects import (
     Boat,
@@ -55,6 +56,7 @@ __all__ = [
     "RepositoryObject",
     "Tower",
     "TowerController",
+    "VehicleStateError",
     "UnsupportedCommand",
     "arctic_sim_fleet",
     "object_for_type",

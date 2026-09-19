@@ -5,6 +5,8 @@ from __future__ import annotations
 from enum import Enum
 from os import PathLike
 from pathlib import Path
+import re
+import time
 from typing import Generic, Self, TypeVar
 
 from .mavproxy import MavProxySession
@@ -17,6 +19,10 @@ class MavProxyConnectionError(ConnectionError):
 
 class MissionUploadError(RuntimeError):
     """Raised when MAVProxy does not confirm a mission upload."""
+
+
+class VehicleStateError(RuntimeError):
+    """Raised when a safe control transition cannot be verified."""
 
 
 class CopterMode(str, Enum):
@@ -99,6 +105,39 @@ class ObjectController(Generic[ObjectT]):
 
     def set_parameter(self, parameter: str, value: float) -> None:
         self._send(self.vehicle.set_parameter(parameter, value))
+
+    def is_armed(self, *, timeout_s: float = 5.0) -> bool:
+        """Read the current armed flag from MAVProxy's latest heartbeat."""
+        if timeout_s <= 0:
+            raise ValueError("state timeout must be positive")
+        checkpoint = len(self.session.output)
+        self._send(MavProxyCommand("status", ("HEARTBEAT",)))
+        if not self.session.wait_for_output(
+            "HEARTBEAT {", timeout=timeout_s, start=checkpoint
+        ):
+            raise VehicleStateError("MAVProxy did not return a HEARTBEAT status")
+        output = self.session.output[checkpoint:]
+        matches = re.findall(r"base_mode\s*:\s*(\d+)", output)
+        if not matches:
+            raise VehicleStateError("HEARTBEAT status did not contain base_mode")
+        return bool(int(matches[-1]) & 128)
+
+    def wait_until_disarmed(
+        self, *, timeout_s: float = 180.0, poll_interval_s: float = 2.0
+    ) -> None:
+        """Wait for a confirmed disarmed heartbeat after landing."""
+        if timeout_s <= 0 or poll_interval_s <= 0:
+            raise ValueError("disarm timeout and poll interval must be positive")
+        deadline = time.monotonic() + timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise VehicleStateError(
+                    f"vehicle remained armed for more than {timeout_s:g} seconds"
+                )
+            if not self.is_armed(timeout_s=min(5.0, remaining)):
+                return
+            time.sleep(min(poll_interval_s, max(0.0, deadline - time.monotonic())))
 
     def __enter__(self) -> Self:
         return self.start()
@@ -193,6 +232,16 @@ class PlaneController(ObjectController[Plane]):
         if not mission.is_file():
             raise FileNotFoundError(f"landing mission not found: {mission}")
 
+        # Conservative belly-landing tune for arctic-sim's Skywalker X8. The
+        # stock zero-degree pitch caused a flat/nose-first touchdown.
+        for parameter, value in (
+            ("LAND_PITCH_DEG", 4.0),
+            ("LAND_FLARE_ALT", 4.0),
+            ("LAND_FLARE_SEC", 3.0),
+            ("TECS_LAND_SINK", 0.2),
+        ):
+            self.set_parameter(parameter, value)
+
         checkpoint = len(self.session.output)
         self._send(self.vehicle.load_mission(str(mission)))
         if not self.session.wait_for_output(
@@ -202,6 +251,15 @@ class PlaneController(ObjectController[Plane]):
                 f"MAVProxy did not confirm the landing mission upload: {mission}"
             )
         self.set_mode(PlaneMode.AUTO)
+
+    def reset_after_landing(self, *, state_timeout_s: float = 5.0) -> None:
+        """Clear the landing sequence after verified disarm for another flight."""
+        if self.is_armed(timeout_s=state_timeout_s):
+            raise VehicleStateError(
+                "refusing to clear the landing mission while the plane is armed"
+            )
+        self.set_mode(PlaneMode.MANUAL)
+        self._send(MavProxyCommand("wp", ("clear",)))
 
     def set_speed(self, speed_mps: float) -> None:
         self._send(self.vehicle.set_speed(speed_mps))
