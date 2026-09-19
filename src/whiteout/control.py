@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from enum import Enum
 from os import PathLike
-from pathlib import Path
 import re
 import time
 from typing import Generic, Self, TypeVar
 
 from .mavproxy import MavProxySession
+from .mission import SearchMission
 from .objects import Copter, MavProxyCommand, Plane, RepositoryObject, Tower
 
 
@@ -62,6 +62,7 @@ class ObjectController(Generic[ObjectT]):
         self.vehicle = vehicle
         self.connection_timeout_s = float(connection_timeout_s)
         self.session: MavProxySession = vehicle.mavproxy_session(executable=executable)
+        self._search_mission: SearchMission | None = None
 
     @property
     def connected(self) -> bool:
@@ -99,6 +100,55 @@ class ObjectController(Generic[ObjectT]):
 
     def release_rc(self) -> None:
         self._send(self.vehicle.release_rc())
+
+    @property
+    def search_mission(self) -> SearchMission | None:
+        """The last search mission whose upload MAVProxy confirmed."""
+        return self._search_mission
+
+    def upload_search_mission(
+        self,
+        mission_path: str | PathLike[str],
+        *,
+        upload_timeout_s: float = 15.0,
+    ) -> SearchMission:
+        """Validate and upload a route without arming or changing flight mode."""
+        if upload_timeout_s <= 0:
+            raise ValueError("mission upload timeout must be positive")
+        mission = SearchMission.load(mission_path).validate_for_search()
+        # Once a load is attempted, the vehicle's prior mission state is no
+        # longer certain unless MAVProxy confirms the new upload.
+        self._search_mission = None
+        self._upload_mission(mission, upload_timeout_s=upload_timeout_s)
+        self._search_mission = mission
+        return mission
+
+    def _upload_mission(
+        self, mission: SearchMission, *, upload_timeout_s: float
+    ) -> None:
+        if upload_timeout_s <= 0:
+            raise ValueError("mission upload timeout must be positive")
+        checkpoint = len(self.session.output)
+        self._send(self.vehicle.load_mission(str(mission.path)))
+        if not self.session.wait_for_output(
+            "Sent all ", timeout=upload_timeout_s, start=checkpoint
+        ):
+            raise MissionUploadError(
+                f"MAVProxy did not confirm the mission upload: {mission.path}"
+            )
+
+    def _require_search_mission(self) -> SearchMission:
+        if self._search_mission is None:
+            raise VehicleStateError("no confirmed search mission has been uploaded")
+        return self._search_mission
+
+    def _clear_search_mission(self, safe_mode: CopterMode | PlaneMode) -> None:
+        self._require_search_mission()
+        if self.is_armed():
+            raise VehicleStateError("refusing to clear a mission while the vehicle is armed")
+        self.set_mode(safe_mode)  # type: ignore[attr-defined]
+        self._send(MavProxyCommand("wp", ("clear",)))
+        self._search_mission = None
 
     def show_parameter(self, parameter: str) -> None:
         self._send(self.vehicle.show_parameter(parameter))
@@ -173,6 +223,23 @@ class CopterController(ObjectController[Copter]):
     def return_to_launch(self) -> None:
         self.set_mode(CopterMode.RTL)
 
+    def start_search(self) -> None:
+        self._require_search_mission()
+        self.set_mode(CopterMode.AUTO)
+
+    def pause_search(self) -> None:
+        self._require_search_mission()
+        self.set_mode(CopterMode.LOITER)
+
+    def resume_search(self) -> None:
+        self.start_search()
+
+    def abort_search(self) -> None:
+        self.set_mode(CopterMode.RTL)
+
+    def clear_search_mission(self) -> None:
+        self._clear_search_mission(CopterMode.STABILIZE)
+
     def set_speed(self, speed_mps: float) -> None:
         self._send(self.vehicle.set_speed(speed_mps))
 
@@ -219,6 +286,23 @@ class PlaneController(ObjectController[Plane]):
     def return_to_launch(self) -> None:
         self.set_mode(PlaneMode.RTL)
 
+    def start_search(self) -> None:
+        self._require_search_mission()
+        self.set_mode(PlaneMode.AUTO)
+
+    def pause_search(self) -> None:
+        self._require_search_mission()
+        self.set_mode(PlaneMode.LOITER)
+
+    def resume_search(self) -> None:
+        self.start_search()
+
+    def abort_search(self) -> None:
+        self.set_mode(PlaneMode.RTL)
+
+    def clear_search_mission(self) -> None:
+        self._clear_search_mission(PlaneMode.MANUAL)
+
     def autoland(
         self,
         mission_path: str | PathLike[str],
@@ -226,11 +310,7 @@ class PlaneController(ObjectController[Plane]):
         upload_timeout_s: float = 15.0,
     ) -> None:
         """Upload a landing mission and enter ArduPlane AUTO mode."""
-        if upload_timeout_s <= 0:
-            raise ValueError("mission upload timeout must be positive")
-        mission = Path(mission_path).resolve()
-        if not mission.is_file():
-            raise FileNotFoundError(f"landing mission not found: {mission}")
+        mission = SearchMission.load(mission_path)
 
         # Conservative belly-landing tune for arctic-sim's Skywalker X8. The
         # stock zero-degree pitch caused a flat/nose-first touchdown.
@@ -242,14 +322,7 @@ class PlaneController(ObjectController[Plane]):
         ):
             self.set_parameter(parameter, value)
 
-        checkpoint = len(self.session.output)
-        self._send(self.vehicle.load_mission(str(mission)))
-        if not self.session.wait_for_output(
-            "Sent all ", timeout=upload_timeout_s, start=checkpoint
-        ):
-            raise MissionUploadError(
-                f"MAVProxy did not confirm the landing mission upload: {mission}"
-            )
+        self._upload_mission(mission, upload_timeout_s=upload_timeout_s)
         self.set_mode(PlaneMode.AUTO)
 
     def reset_after_landing(self, *, state_timeout_s: float = 5.0) -> None:

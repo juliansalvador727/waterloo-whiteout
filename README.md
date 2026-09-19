@@ -1,56 +1,108 @@
-# Dominion Dynamics WHITEOUT controller scaffold
+# Dominion Dynamics WHITEOUT controller
 
-WHITEOUT is a small, safety-first Python 3.11+ foundation for ingesting simulator imagery and telemetry, estimating a target position, maintaining a track, recommending observation actions, and explicitly controlling simulator assets through MAVProxy.
+WHITEOUT is a safety-focused Python 3.11+ controller for ArcticSim. It ingests camera imagery and MAVLink telemetry, provides target geolocation and tracking components, recommends observation actions, and exposes explicit MAVProxy-backed controls for the simulated fleet.
 
-## Safety defaults
+> **This repository does not place towers or other simulator assets.** ArcticSim owns all asset placement through its own `arctic-sim/.env` `ASSET_N` entries. `waterloo-whiteout` is a separate controller repository. Do not copy ArcticSim into this repository or add its placement entries here.
 
-- Nothing arms or moves automatically. Vehicle commands are transmitted only when a caller explicitly opens a `MavProxySession` and sends them.
-- MAVLink uses `udpout` because each simulator MAVProxy endpoint is an `udpin` listener. The adapter exposes telemetry polling and no flight-control interface. An explicit `connect(initiate_telemetry=True)` may send one benign GCS heartbeat to establish telemetry; the default sends nothing.
-- Simulator control launches `mavproxy.py` with `--master=udpout:<host>:<port>` and writes validated console commands to that process. It does not implement a parallel direct-pymavlink control path.
-- Coordinator outputs are plain `ActionRecommendation` values. They are not executed.
+## Safety boundaries
+
+- Nothing arms or moves automatically. Vehicle commands are transmitted only when a caller explicitly opens a controller or `MavProxySession` and invokes a command.
+- `ReadOnlyMavlink` is a separate telemetry-only adapter. It connects with `udpout`, sends nothing by default, and has no flight-control methods. `connect(initiate_telemetry=True)` may send one benign GCS heartbeat to establish telemetry.
+- Simulator control launches `mavproxy.py` with `--master=udpout:<host>:<port>` and sends validated console commands to that process. There is no parallel direct-pymavlink control path.
+- `scripts/test_fly.py` requires `--confirm-flight` because it arms and moves an aircraft.
+- Coordinator outputs are `ActionRecommendation` data. They are not wired to the control layer and are never executed automatically.
 - There is no local HTTP server. `TrackApiClient` only makes an outbound POST to the configured Dominion endpoint.
-- Outbound track submission requires both `track_api.allow_submission: true` in configuration and explicit confirmation from the caller. The test submission utility requires `--confirm`.
-- Network utilities do nothing unless their explicit confirmation flag is present.
+- Track submission requires both `track_api.allow_submission: true` and explicit confirmation from the caller. Network utilities also require their documented confirmation flags.
 
-## Setup
+## Quick start
 
-Create a Python 3.11 or newer virtual environment, then install the package in editable mode. The unit tests need no third-party packages. Install only the optional features you use: `whiteout[yaml]` for YAML configuration, `whiteout[camera]` for OpenCV decoding, `whiteout[mavlink]` for direct telemetry polling, or `whiteout[mavproxy]` for simulator control.
+### 1. Install the controller
 
-Copy `.env.example` to `.env` only if your process manager loads it. The package does not silently load dotenv files. Copy `config.example.yaml` to `config.yaml`, set `placement_owner`, and validate it with `whiteout --config config.yaml --check-config`. JSON configuration works without PyYAML.
+Create and activate a Python 3.11 or newer virtual environment:
 
-Run the offline suite with:
-
-```text
-PYTHONPATH=src python -m unittest discover -s tests -v
+```sh
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[yaml,camera,mavlink]'
 ```
 
-## Architecture
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`. The optional extras are:
 
-- `models.py`: immutable typed observations, estimates, tracks, and recommendations.
-- `config.py`: validated configuration and `${NAME}` or `${NAME:-fallback}` substitution.
-- `camera.py`: reconnecting MJPEG byte ingestion with optional OpenCV decoding.
-- `detector.py`: detector protocol plus a safe detector that returns no observations.
-- `mavlink.py`: optional telemetry-only `GLOBAL_POSITION_INT` polling over `udpout`, plus the explicit discovery heartbeat.
-- `mavproxy.py`: managed MAVProxy subprocess sessions used for explicit simulator control.
-- `objects.py`: typed copter, plane, reserved boat, and tower descriptions with validated MAVProxy console commands.
-- `geolocation.py`: pinhole ray intersection with a locally flat water plane and propagated uncertainty.
-- `tracker.py`: alpha-beta constant-velocity track filtering.
-- `coordinator.py`: SEARCH, CONFIRM, TRACK, and REACQUIRE recommendation logic.
-- `track_api.py`: safety-gated outbound Dominion client and internal-track payload mapping.
-- `telemetry_log.py`: append-only JSONL event records.
-- `main.py`: bounded camera-to-detector observation pipeline and safety-gated CLI.
+- `yaml`: PyYAML configuration support
+- `camera`: OpenCV frame decoding
+- `mavlink`: direct, telemetry-only pymavlink polling
+- `mavproxy`: MAVProxy-backed simulator control
 
-The flat-water estimator is intentionally local and approximate. Camera calibration, mounting angles, water elevation, and uncertainty values must be measured for a real deployment.
+The offline unit tests need no third-party packages. Install the control extra before opening a simulator controller:
 
-## Repository object classes
-
-`whiteout.objects` contains `Copter`, `Plane`, `Boat`, and `Tower` classes. Each class owns its arctic-sim MAVProxy endpoint, supported modes, and relevant command builders. The rover is intentionally absent because it is not part of the WHITEOUT fleet. Install MAVProxy before opening a session:
-
-```text
-pip install -e ".[mavproxy]"
+```sh
+python -m pip install -e '.[mavproxy]'
 ```
 
-The normal public API is a set of typed Python controllers. They start MAVProxy, wait for the vehicle heartbeat, validate arguments, and transmit internally; application code does not need to build console strings:
+### 2. Configure and verify offline
+
+```sh
+cp config.example.yaml config.yaml
+export SIM_HOST=127.0.0.1
+```
+
+Edit `config.yaml` and replace `placement_owner: unassigned` with the teammate responsible for simulator placement and camera calibration. Treat an unassigned owner as a deployment blocker. When ArcticSim runs on another machine, use its resolvable hostname or private address instead of `127.0.0.1`.
+
+Validate configuration and run the offline suite:
+
+```sh
+whiteout --config config.yaml --check-config
+python -m unittest discover -s tests -v
+```
+
+The package does not automatically load dotenv files. Do not commit `.env`, `config.yaml`, credentials, recordings, or telemetry logs.
+
+### 3. Check an authorized live camera
+
+Coordinate with the teammate hosting ArcticSim first. These bounded commands make network connections but send no flight commands or track submissions:
+
+```sh
+python scripts/check_connections.py --config config.yaml --confirm-network
+whiteout --config config.yaml --observe-camera tower-1 --max-frames 10 --confirm-network
+```
+
+The built-in observation command uses `NoOpDetector`, so zero detections are expected. The TCP checker tests camera ports only and does not probe MAVLink UDP endpoints.
+
+## Implemented components
+
+- validated YAML or JSON configuration with `${NAME}` and `${NAME:-fallback}` substitution
+- reconnecting MJPEG ingestion with optional OpenCV decoding
+- a typed detector interface and safe `NoOpDetector`
+- telemetry-only `GLOBAL_POSITION_INT` polling through `ReadOnlyMavlink`
+- typed copter, plane, tower, and reserved boat descriptions
+- managed MAVProxy sessions and typed controllers for explicit simulator control
+- validated QGC WPL search mission upload for both aircraft, separate explicit start, pause/resume, RTL/abort, and safe clearing
+- a separate runway-specific fixed-wing landing mission
+- local flat-water pixel geolocation with uncertainty
+- an alpha-beta constant-velocity tracker
+- SEARCH, CONFIRM, TRACK, REACQUIRE, RETURN, and ABORT recommendations with offline manual or synthetic detection injection
+- append-only JSONL logging and a safety-gated Dominion track client
+
+The observation pipeline is still a scaffold. It has no production detector and does not connect telemetry, geolocation, tracking, control, or submission end to end. `ReadOnlyMavlink` reads position plus synchronized `ATTITUDE` samples without blocking. Missing, stale, or unsynchronized attitude remains explicitly absent rather than appearing as live zero values. Do not trust aircraft geolocation until calibrated camera extrinsics are wired and each frame's observation metadata reports synchronized pose and attitude.
+
+## ArcticSim endpoints
+
+The configured role mapping is:
+
+| Role | Camera URL | MAVLink address |
+| --- | --- | --- |
+| `quadcopter` | `http://<SIM_HOST>:8600/stream` | `udpout:<SIM_HOST>:14550` |
+| `fixed-wing` | `http://<SIM_HOST>:8610/stream` | `udpout:<SIM_HOST>:14560` |
+| `tower-1` | `http://<SIM_HOST>:8630/stream` | `udpout:<SIM_HOST>:14580` |
+| `tower-2` | `http://<SIM_HOST>:8640/stream` | `udpout:<SIM_HOST>:14590` |
+
+All cameras use `/stream`. ArcticSim's MAVProxy endpoints are `udpin` listeners, so both the telemetry adapter and managed MAVProxy sessions connect with `udpout`.
+
+`whiteout.ARCTIC_SIM_FLEET` exposes these four deployed assets in the same order, using the default live host `10.99.0.1`. The `Boat` class reserves port 14570, but its `bundled` flag is false because ArcticSim does not currently include that model. A boat session cannot be opened.
+
+## MAVProxy hardware access
+
+`Copter`, `Plane`, and `Tower` create typed controllers that start MAVProxy, wait for a vehicle heartbeat, validate values, and transmit commands. Application code does not need to construct console strings:
 
 ```python
 from whiteout import Copter, CopterMode, Plane, PlaneMode, Tower
@@ -69,67 +121,142 @@ with Tower.one("10.99.0.1").controller() as tower:
     tower.tilt(1700)
 ```
 
-`CopterMode` and `PlaneMode` are separate enums, so plane-only and copter-only modes cannot be mixed accidentally. Towers do not expose arming. Their pan and tilt methods use MAVProxy's built-in `cmdlong` command with `MAV_CMD_DO_SET_SERVO`; no unavailable third-party servo module is required. Unsupported modes and out-of-range PWM values raise an error before transmission. Low-level `MavProxyCommand` builders remain available for unusual commands, but are not needed for normal control.
+`CopterMode` and `PlaneMode` are separate enums, so modes cannot be mixed between vehicle types. Towers do not support arming. Pan and tilt use MAVProxy's built-in `cmdlong` command with `MAV_CMD_DO_SET_SERVO`, without an optional servo module. Unsupported operations, invalid modes, and PWM values outside 1000 to 2000 are rejected before transmission.
 
-For a bounded Python test flight, install `whiteout[mavproxy]`, start arctic-sim, and run one of these. The required flag is deliberate because these commands arm and move the simulated aircraft:
+Low-level `MavProxyCommand` builders remain available for unusual cases. Building a command does not execute it. Transmission only occurs through a running `MavProxySession` or typed controller.
 
-```text
+To smoke-test the four live camera streams and connect a controller to each asset, opt in explicitly:
+
+```sh
+WHITEOUT_LIVE_ARCTIC_SIM=1 PYTHONPATH=src python -m unittest tests.test_arctic_sim -v
+```
+
+This live test launches MAVProxy against real simulator endpoints. The normal unit suite uses fakes and makes no network connections.
+
+## Search mission workflow
+
+The canonical routes are `missions/fixed_wing_search.waypoints` and `missions/quadcopter_search.waypoints`. They are specific to the active ArcticSim Fort Ross build in `out/fort_ross`: its generated 6,132.3 m target course has seed `781223750` and was segment-verified land-free with 336.4 m minimum clearance. These routes are deterministic coverage patterns derived from that corridor. No route optimization was performed.
+
+The fixed-wing route flies at 200 m relative altitude. It sweeps both sides of the full generated boat corridor with approximately 100 m offsets, a 200 m total swath, and 100 m rounded end turns. Its closed search loop plus the initial transit is approximately 13.9 km. This full-corridor coverage matters because the active simulator uses `SHIP_START=random`, so the vessel's phase along the course is not known. The quadcopter first climbs at its documented home, `71.995807, -94.839300`, then transits at 90 m relative altitude to a local open-water sector. Its closed coverage loop is approximately 800 m long by 100 m wide, with an approximately 2.5 km total mission path including transit. It does not claim to cover the full 6.5 km map and does not assume that the target has been detected.
+
+Regenerate and revalidate both files whenever `COURSE_SEED`, the active site, or generated terrain changes. Regenerate the affected aircraft file if its spawn changes. Validation must use the new `terrain.json` course plus the generated DEM or heightmap, and must check every straight mission segment rather than waypoint positions alone. Also review terrain clearance, aircraft turn performance, camera footprint, battery endurance, geofence, and current simulator state before live use.
+
+In application code, open the appropriate typed controller and follow this deliberate sequence:
+
+1. Call `upload_search_mission(path)`. It validates QGC WPL structure and search-only commands, uploads through MAVProxy, and waits for MAVProxy's `Sent all` confirmation. It does not arm or enter `AUTO`.
+2. Arm and establish a safe takeoff or launch using the vehicle-specific procedure.
+3. Call `start_search()` explicitly to enter `AUTO` only after operator review.
+4. Use `pause_search()` to enter vehicle `LOITER`, `resume_search()` to re-enter `AUTO`, or `abort_search()` to enter `RTL`.
+5. Disarm before `clear_search_mission()`. Clearing switches to `STABILIZE` for the copter or `MANUAL` for the plane and refuses to run while armed.
+
+`SearchOrchestrator` consumes a `Detection` or `None` and emits inert `SearchRecommendation` data. Manual and synthetic detections can be injected offline without a detector. A first candidate remains in `CONFIRM` and never produces a pursuit recommendation; only repeated confirmation reaches `TRACK`. RETURN and ABORT recommend RTL, but nothing in orchestration transmits to MAVProxy.
+
+## Bounded simulator flights and waypoint landing
+
+Start ArcticSim, install `whiteout[mavproxy]`, and run one of the following only when an authorized simulator operator expects the aircraft to move:
+
+```sh
 python scripts/test_fly.py quadcopter --confirm-flight
 python scripts/test_fly.py fixed-wing --confirm-flight
 ```
 
-The quadcopter enters GUIDED mode, takes off to 10 m, holds for 15 seconds, then enters LAND mode. The fixed-wing enters TAKEOFF mode, climbs for 45 seconds, applies the simulator's gentle belly-landing flare profile, uploads `missions/arctic_sim_fixed_wing_land.waypoints`, waits for MAVProxy to confirm the upload, and enters AUTO. Both flows poll MAVProxy's heartbeat and exit as soon as automatic disarm is confirmed; zero throttle alone is not treated as completion. The fixed-wing then returns to MANUAL and clears the landing mission, which prevents ArduPlane's `In landing sequence` pre-arm rejection on the next flight. Use `--altitude-m`, `--hold-seconds`, and `--landing-timeout-seconds` to change the bounded defaults.
+The quadcopter enters GUIDED mode, takes off to 10 m, holds for 15 seconds, and enters LAND mode. The fixed-wing enters TAKEOFF mode, climbs for 45 seconds, applies a conservative belly-landing flare configuration, uploads `missions/arctic_sim_fixed_wing_land.waypoints`, waits for MAVProxy to confirm the upload, and enters AUTO.
 
-The included fixed-wing mission uses the default arctic-sim runway declared by `ASSET_3` in arctic-sim's `.env.example`, with its final approach rotated 10 degrees clockwise from the original runway vector when viewed from above. If the fixed-wing spawn/runway changes, supply a matching QGC WPL mission with `--landing-mission PATH`; do not reuse the default coordinates at another site.
+Both flows poll the MAVProxy heartbeat and finish only after automatic disarm is confirmed. Zero throttle alone is not treated as completion. After the fixed-wing lands, the script returns it to MANUAL and clears the mission so ArduPlane does not reject the next flight with `In landing sequence`.
 
-The `Boat` class records the reserved boat role, but its `bundled` flag is false because arctic-sim does not currently include that model. A boat session therefore cannot be opened.
+Use `--altitude-m`, `--hold-seconds`, and `--landing-timeout-seconds` to change the bounded defaults. Use `--host` when the simulator is not at `10.99.0.1`.
 
-`whiteout.ARCTIC_SIM_FLEET` provides the live deployment endpoints at `10.99.0.1` in this fixed order: quadcopter, fixed-wing, tower-1, tower-2. Its MAVProxy commands use ports 14550, 14560, 14580, and 14590; the paired camera streams use ports 8600, 8610, 8630, and 8640 with path `/stream`.
+> **Runway-specific mission warning:** The bundled fixed-wing mission is tied to the default ArcticSim runway declared by `ASSET_3` in ArcticSim's `.env.example`. Its final approach is rotated 10 degrees clockwise from the original runway vector when viewed from above. If the aircraft spawn or runway changes, provide a matching QGC WPL file with `--landing-mission PATH`. Never reuse the bundled coordinates at another site.
 
-The ordinary unit suite verifies the exact commands, URLs, and ordering without network access. To additionally smoke-test the four live camera streams and launch MAVProxy against all four assets, run:
+The landing mission is not a search route. Search upload rejects its landing commands, and landing remains available only through the plane-specific `autoland()` flow.
 
-```text
-WHITEOUT_LIVE_ARCTIC_SIM=1 PYTHONPATH=src python -m unittest tests.test_arctic_sim -v
+## Tower placement and camera calibration
+
+Tower placement belongs entirely to ArcticSim. Only the teammate hosting the simulator should edit `arctic-sim/.env`, and the team should coordinate before changing a shared scene. This controller can pan and tilt an existing tower, but it cannot place, relocate, rebuild, restart, or reset simulator assets.
+
+An ArcticSim placement entry has this documented shape:
+
+```dotenv
+ASSET_N=tower,<asset-name>,<latitude>,<longitude>
 ```
 
-## Detector integration
+The documented default tower entries are:
 
-The detector implementation is the teammate integration point. Implement the `Detector` protocol with a class whose `detect(frame)` method returns typed `Detection` values. Keep model loading in the implementation constructor so importing WHITEOUT remains usable offline. Convert detections to `GeoEstimate` values using the camera calibration and the matching platform pose before updating the tracker. The included `NoOpDetector` is the default safe placeholder. The current coordinator produces recommendations only; it is not wired to a MAVProxy session and does not execute or transmit vehicle actions.
+```dotenv
+ASSET_2=tower,tower-1,71.980671,-94.853711
+ASSET_5=tower,tower-2,72.011778,-94.804721
+```
 
-## Placement owner and simulator location
+ArcticSim derives tower elevation from terrain. Camera pan and tilt are set after startup through the typed tower controller, not in the placement entry. After an authorized `.env` edit, the ArcticSim host must follow ArcticSim's documented save, rebuild, and restart procedure. Those are simulator operations, not controller commands.
 
-Set `placement_owner` to the person or service responsible for camera placement and calibration. Treat `unassigned` as a deployment blocker. That owner should maintain the mapping between each configured camera, its platform, and calibrated pose. Resolution and FOV values are included in the example configuration, but they are not enough for geolocation. Camera mount orientation and full extrinsics must be calibrated, especially for both towers and both aircraft, whose attitude and mounting offsets directly affect ground intersection.
+After the host reports the simulator ready, verify both views:
 
-For a simulator on the same machine, set `SIM_HOST=127.0.0.1`. For a remote simulator, use its resolvable hostname or private network address. Camera URLs and MAVLink listeners are assembled from `SIM_HOST` plus the configured ports. Never put credentials in configuration. Firewall and routing setup remain outside this controller.
+- tower 1: `http://<SIM_HOST>:8630/stream`
+- tower 2: `http://<SIM_HOST>:8640/stream`
 
-The official role mapping is:
+Bounded recordings require explicit network confirmation:
 
-| Role | Camera | MAVLink |
-| --- | ---: | ---: |
-| `quadcopter` | 8600 | 14550 |
-| `fixed-wing` | 8610 | 14560 |
-| `tower-1` | 8630 | 14580 |
-| `tower-2` | 8640 | 14590 |
+```sh
+python scripts/record_cameras.py --config config.yaml --camera tower-1 --frames 30 --confirm-network
+python scripts/record_cameras.py --config config.yaml --camera tower-2 --frames 30 --confirm-network
+```
 
-Every camera uses `/stream`. MAVLink addresses have the form `udpout:<SIM_HOST>:<port>`.
+Check line of sight, target scale, overlapping water coverage, and camera orientation. A correctly placed tower can still show only sky or terrain if pan or tilt is unsuitable. Record the intrinsics, mount pose, water-plane assumptions, and uncertainty for every camera. Resolution and field of view alone are not enough for geolocation.
 
-## Dominion track submission
+## Detector and tracking integration
 
-Set `track_api.endpoint` to the approved Dominion endpoint and keep a persistent `track_api.name`, such as `Sierra One`. The client maps an internal track to `name`, `lat`, and `lon`, adding heading in degrees clockwise from north when velocity is available. `include_speed` defaults to false because the official speed units are not confirmed. Enable it only after confirming the endpoint's expected units; the current internal magnitude is metres per second.
+Implement the `Detector` protocol from `src/whiteout/detector.py` with `detect(frame: CameraFrame) -> list[Detection]`. Each detection needs the source camera name, target pixel, confidence, and preferably the frame timestamp. Keep model loading in the implementation constructor so imports and offline tests do not require model weights or network access.
 
-Submission remains disabled by default. A POST occurs only when configuration sets `allow_submission: true` and the individual caller passes explicit confirmation. Tests inject a fake opener and make no network requests.
+The remaining integration sequence is:
 
-## One-day workflow
+1. Select the detector instead of `NoOpDetector`.
+2. Associate each detection with synchronized platform or tower pose.
+3. Convert the target pixel to a `GeoEstimate` using calibrated intrinsics and pose.
+4. Update `ConstantVelocityTracker`.
+5. Pass the estimate to `Coordinator` and log the result.
+6. Submit the resulting `Track` only after both submission gates are enabled.
 
-1. Assign the placement owner and record camera intrinsics, mounting pose, and water-plane assumptions.
-2. Validate configuration offline and run the unit tests.
-3. With authorization, use `scripts/check_connections.py --confirm-network` to inspect camera TCP reachability. It does not probe UDP endpoints.
-4. Record a short bounded sample using `scripts/record_cameras.py --camera NAME --frames COUNT --confirm-network`.
-5. Implement and evaluate a detector against saved frames, without involving the simulator.
-6. Replay detections through geolocation, tracking, and coordination while inspecting JSONL logs.
-7. Review uncertainties and recommendation transitions with the placement owner.
-8. If Dominion submission is approved, set both the endpoint and config opt-in. Exercise `scripts/submit_test_track.py --confirm` only against that approved endpoint.
+Keep recommendation generation separate from command transmission. A caller must explicitly decide which reviewed recommendations, if any, to send through a controller.
 
-Keep recommendation generation separate from command transmission. A caller must explicitly decide which reviewed recommendations, if any, to send through a `MavProxySession`.
+## Dominion submission API
 
-The built-in placeholder pipeline can process a bounded camera sample with `whiteout --config config.yaml --observe-camera NAME --max-frames 10 --confirm-network`. It uses `NoOpDetector`, makes recommendations only, and never submits tracks.
+Set the approved endpoint through the environment and keep a persistent reporting name:
+
+```sh
+export DOMINION_TRACK_API_ENDPOINT='https://approved-endpoint.example'
+export DOMINION_TRACK_NAME='Sierra One'
+```
+
+Then set `track_api.allow_submission: true` in local `config.yaml`. The test utility sends one synthetic track only when both the configuration gate and command confirmation are present:
+
+```sh
+python scripts/submit_test_track.py --config config.yaml --confirm
+```
+
+Use that command only with an endpoint approved by Dominion. Payloads contain `name`, `lat`, and `lon`, plus heading when velocity is available. `include_speed` defaults to `false`; enable it only after Dominion confirms the expected units. The internal speed magnitude is metres per second.
+
+## Troubleshooting
+
+**`YAML configuration requires PyYAML`**
+
+Activate the virtual environment and install the YAML extra:
+
+```sh
+python -m pip install -e '.[yaml]'
+```
+
+**A stream is unreachable**
+
+Confirm `SIM_HOST`, the role's camera port, `/stream`, routing, and firewall rules with the simulator host. Confirm ArcticSim is already running. Do not start, rebuild, or reset the simulator from this repository.
+
+**Detections are always empty**
+
+`NoOpDetector` always returns an empty list. Wire a real detector, confirm it receives decodable frames, and validate its thresholds and labels against saved images.
+
+**Geolocation is wrong**
+
+Verify the camera-to-platform mapping, timestamps, focal lengths, optical center, mount rotation, live attitude, altitude reference, water elevation, and angle units. The estimator assumes a local flat water plane and is intentionally approximate.
+
+**MAVProxy is unavailable or a controller never comes online**
+
+Install `whiteout[mavproxy]`, confirm `mavproxy.py` is on the active environment's path, verify the matching UDP port, and confirm the simulator asset is already running. Controllers fail closed if the initial vehicle heartbeat is not observed.

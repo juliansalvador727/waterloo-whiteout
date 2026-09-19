@@ -42,10 +42,20 @@ class Telemetry:
     latitude: float
     longitude: float
     altitude_m: float
-    roll_rad: float = 0.0
-    pitch_rad: float = 0.0
-    yaw_rad: float = 0.0
+    roll_rad: float | None = None
+    pitch_rad: float | None = None
+    yaw_rad: float | None = None
     timestamp: datetime = field(default_factory=utc_now)
+    attitude_timestamp: datetime | None = None
+
+    @property
+    def has_attitude(self) -> bool:
+        return (
+            self.roll_rad is not None
+            and self.pitch_rad is not None
+            and self.yaw_rad is not None
+            and self.attitude_timestamp is not None
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +74,8 @@ class SearchMode(str, Enum):
     CONFIRM = "CONFIRM"
     TRACK = "TRACK"
     REACQUIRE = "REACQUIRE"
+    RETURN = "RETURN"
+    ABORT = "ABORT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,4 +84,3 @@ class ActionRecommendation:
     action: str
     reason: str
     target: GeoEstimate | None = None
-
