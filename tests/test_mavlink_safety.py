@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from math import pi
 from unittest.mock import patch
 
 from whiteout.mavlink import ReadOnlyMavlink
@@ -17,11 +18,12 @@ class _FakeMav:
 
 
 class _FakeConnection:
-    def __init__(self) -> None:
+    def __init__(self, message: object | None = None) -> None:
         self.mav = _FakeMav()
+        self.message = message
 
-    def recv_match(self, **kwargs: object) -> None:
-        return None
+    def recv_match(self, **kwargs: object) -> object | None:
+        return self.message
 
 
 class _MessageConnection(_FakeConnection):
@@ -153,6 +155,24 @@ class MavlinkSafetyTests(unittest.TestCase):
         assert telemetry is not None
         self.assertFalse(telemetry.has_attitude)
         self.assertIsNone(telemetry.attitude_timestamp)
+
+    def test_position_heading_is_exposed_as_yaw(self) -> None:
+        message = types.SimpleNamespace(
+            lat=719900000,
+            lon=-948200000,
+            relative_alt=12500,
+            hdg=9000,
+            time_boot_ms=10_000,
+            get_type=lambda: "GLOBAL_POSITION_INT",
+        )
+        adapter = ReadOnlyMavlink("quadcopter", "sim.invalid", 14550)
+        adapter._connection = _MessageConnection(None, message)
+
+        telemetry = adapter.poll()
+
+        self.assertIsNotNone(telemetry)
+        assert telemetry is not None
+        self.assertAlmostEqual(telemetry.yaw_rad, pi / 2)
 
 
 if __name__ == "__main__":

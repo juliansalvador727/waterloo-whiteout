@@ -75,7 +75,7 @@ class ApiSafetyTests(unittest.TestCase):
         self.assertAlmostEqual(with_speed["heading"], 53.13010235415598)
         self.assertEqual(with_speed["speed"], 5.0)
 
-    def test_local_http_server_interface_was_removed(self) -> None:
+    def test_track_api_exposes_no_inbound_server(self) -> None:
         self.assertFalse(hasattr(track_api, "create_server"))
         self.assertFalse(hasattr(track_api, "TrackStore"))
 

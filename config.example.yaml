@@ -1,4 +1,4 @@
-sim_host: ${SIM_HOST:-127.0.0.1}
+sim_host: ${SIM_HOST:-10.99.0.1}
 placement_owner: unassigned
 
 cameras:

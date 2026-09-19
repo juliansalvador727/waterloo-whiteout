@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WHITEOUT Mission Control</title>
+  <link rel="stylesheet" href="/static/maplibre-gl.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071013;
+      --panel: #0c181d;
+      --panel-2: #102229;
+      --line: #213940;
+      --text: #e9f3f5;
+      --muted: #789097;
+      --cyan: #45d9f5;
+      --mint: #48ffbd;
+      --amber: #ffbf69;
+      --red: #ff667d;
+      --blue: #61a8ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; overflow: hidden; color: var(--text); background:
+        radial-gradient(circle at 85% 0%, #102a31 0, transparent 28%), var(--bg);
+      font: 12px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    header {
+      height: 58px; display: flex; align-items: center; gap: 24px; padding: 0 18px;
+      border-bottom: 1px solid var(--line); background: rgba(7,16,19,.92);
+    }
+    .headline { display:flex; justify-content:flex-start; gap:22px; flex:1; }
+    .metric { min-width: 95px; }
+    .metric label { color:var(--muted); display:block; font-size:9px; letter-spacing:.12em; text-transform:uppercase; }
+    .metric strong { display:block; margin-top:2px; font-size:13px; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; border:1px solid var(--line); border-radius:20px; }
+    .sim-alert {
+      position:fixed; z-index:20; top:66px; left:50%; transform:translate(-50%,-8px); opacity:0;
+      display:flex; gap:8px; align-items:center; padding:7px 11px; border:1px solid rgba(255,102,125,.55);
+      border-radius:5px; color:#ffdce2; background:rgba(45,10,17,.94); box-shadow:0 8px 24px rgba(0,0,0,.3);
+      pointer-events:none; transition:opacity .15s,transform .15s;
+    }
+    .sim-alert.visible { opacity:1; transform:translate(-50%,0); }
+    .sim-alert b { color:var(--red); font-size:9px; letter-spacing:.1em; }
+    .sim-alert span { color:#d5b9be; font-variant-numeric:tabular-nums; }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); box-shadow:0 0 8px currentColor; }
+    .online, .locked, .track { color:var(--mint)!important; }
+    .degraded, .found, .confirm, .predicted { color:var(--amber)!important; }
+    .offline, .lost, .error { color:var(--red)!important; }
+    .search, .reacquire { color:var(--cyan)!important; }
+    #replay-controls { display:none; align-items:center; gap:8px; }
+    #replay-controls button, #replay-controls select {
+      color:var(--text); background:var(--panel-2); border:1px solid var(--line); border-radius:4px; padding:5px 8px;
+    }
+    main {
+      height: calc(100vh - 58px); padding: 10px; display:grid; gap:10px;
+      grid-template-columns: minmax(0, 2.05fr) minmax(340px, 1fr);
+      grid-template-rows: minmax(0, 1fr) 126px;
+    }
+    .camera-grid { min-height:0; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:8px; }
+    .camera-card, .panel {
+      min-width:0; min-height:0; position:relative; overflow:hidden; border:1px solid var(--line);
+      border-radius:7px; background:var(--panel); box-shadow:0 8px 30px rgba(0,0,0,.15);
+    }
+    .camera-card { cursor:pointer; transition:border-color .15s, box-shadow .15s; }
+    .camera-card.selected { border-color:var(--cyan); box-shadow:0 0 0 1px var(--cyan),0 8px 30px rgba(0,0,0,.2); }
+    .camera-card img { width:100%; height:100%; object-fit:contain; background:#020708; display:block; }
+    .camera-head {
+      position:absolute; z-index:2; left:0; right:0; top:0; height:36px; padding:8px 10px;
+      display:flex; justify-content:space-between; align-items:center; background:linear-gradient(#061014e8, transparent);
+      pointer-events:none;
+    }
+    .camera-name { font-weight:750; letter-spacing:.1em; font-size:10px; }
+    .camera-meta { display:flex; gap:9px; color:#bed0d5; font-variant-numeric:tabular-nums; }
+    .camera-foot {
+      position:absolute; z-index:2; left:8px; right:8px; bottom:7px; display:flex; justify-content:space-between; align-items:end;
+      text-shadow:0 1px 4px #000; pointer-events:none;
+    }
+    .activity { color:var(--cyan); font-weight:700; letter-spacing:.08em; }
+    .assignment { max-width:65%; color:#d0dde0; text-align:right; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .side { min-height:0; display:grid; grid-template-rows:minmax(280px, 1.7fr) minmax(160px, 1fr); gap:8px; }
+    .panel-title {
+      height:34px; display:flex; align-items:center; justify-content:space-between; padding:0 10px;
+      border-bottom:1px solid var(--line); color:#b9cbd0; font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+    }
+    .panel-title-meta { display:flex; align-items:center; gap:10px; }
+    .map-credit { color:#60777e; font-size:8px; letter-spacing:.04em; text-transform:none; }
+    .map-credit a { color:inherit; text-decoration:none; }
+    .map-credit a:hover { color:#b9cbd0; }
+    .map-wrap { height:calc(100% - 34px); position:relative; background:#071215; }
+    #tactical-map { position:absolute; inset:0; }
+    .map-tools { position:absolute; z-index:4; top:8px; left:8px; right:8px; display:flex; justify-content:space-between; pointer-events:none; }
+    .map-tool-group { display:flex; gap:4px; padding:3px; border:1px solid rgba(185,203,208,.24); border-radius:5px; background:rgba(7,16,19,.88); backdrop-filter:blur(8px); pointer-events:auto; }
+    .map-tool { color:#b9cbd0; background:transparent; border:0; border-radius:3px; padding:4px 7px; font:700 9px/1.2 ui-sans-serif,system-ui; letter-spacing:.08em; text-transform:uppercase; cursor:pointer; }
+    .map-tool:hover, .map-tool.active { color:#061014; background:var(--cyan); }
+    .map-tool.following { color:#061014; background:var(--mint); }
+    .camera-map-marker { width:13px; height:13px; color:#e9f3f5; cursor:pointer; }
+    .camera-map-marker::before { content:""; position:absolute; inset:0; border-radius:50%; background:var(--camera-color,var(--cyan)); border:2px solid var(--camera-color,var(--cyan)); box-shadow:0 0 8px var(--camera-color,var(--cyan)); }
+    .camera-map-marker::after { content:attr(data-label); position:absolute; left:18px; top:50%; transform:translateY(-50%); font:700 9px/1 ui-sans-serif,system-ui; letter-spacing:.06em; white-space:nowrap; text-shadow:0 1px 3px #000; }
+    .camera-map-marker.selected::before { border-color:#fff; }
+    .camera-map-marker.offline { opacity:.45; }
+    svg { width:100%; height:100%; display:block; }
+    .grid-line { stroke:#163039; stroke-width:1; }
+    .site-border { fill:none; stroke:#46636b; stroke-width:1.5; stroke-dasharray:5 5; }
+    .search-path { fill:none; stroke:var(--blue); stroke-width:2; stroke-dasharray:4 4; opacity:.8; }
+    .fov { fill:rgba(69,217,245,.09); stroke:rgba(69,217,245,.55); stroke-width:1; }
+    .heading-cone { fill:rgba(69,217,245,.12); stroke:rgba(69,217,245,.7); stroke-width:1.2; }
+    .coverage { fill:rgba(72,255,189,.025); stroke:none; }
+    .asset-marker { fill:#071013; stroke:var(--cyan); stroke-width:2.4; }
+    .target-marker { fill:var(--mint); stroke:#fff; stroke-width:1.5; filter:drop-shadow(0 0 6px var(--mint)); }
+    .target-marker.predicted { fill:none; stroke:var(--amber); stroke-dasharray:3 3; }
+    .uncertainty { fill:rgba(255,191,105,.08); stroke:var(--amber); stroke-width:1; stroke-dasharray:3 3; }
+    .map-label { fill:#dce9ec; font:700 10px ui-sans-serif,system-ui; paint-order:stroke; stroke:#071013; stroke-width:3px; }
+    .no-map { position:absolute; z-index:3; inset:0; display:none; align-items:center; justify-content:center; color:var(--muted); pointer-events:none; }
+    .target-panel { display:grid; grid-template-columns:1.25fr .75fr; }
+    .target-visual { position:relative; min-width:0; overflow:hidden; background:#020708; }
+    .target-visual img { width:100%; height:100%; object-fit:contain; }
+    .target-badge { position:absolute; top:8px; left:8px; padding:4px 8px; border:1px solid currentColor; border-radius:3px; background:#071013d9; font-weight:800; letter-spacing:.1em; }
+    .target-view-label { position:absolute; left:8px; bottom:7px; color:#bed0d5; font-size:9px; letter-spacing:.1em; text-shadow:0 1px 4px #000; }
+    .target-info { border-left:1px solid var(--line); padding:9px; display:flex; flex-direction:column; gap:7px; }
+    .target-info .row { display:flex; justify-content:space-between; gap:8px; color:var(--muted); }
+    .target-info .row b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; text-align:right; }
+    .target-inset { flex:1; min-height:55px; border:1px solid var(--line); background:#071215; }
+    .timeline { grid-column:1 / -1; display:grid; grid-template-columns:230px 1fr; }
+    .health { padding:10px 12px; border-right:1px solid var(--line); overflow:hidden; }
+    .health h3 { margin:0 0 7px; font-size:10px; color:var(--muted); letter-spacing:.12em; text-transform:uppercase; }
+    .health-row { display:flex; justify-content:space-between; margin:5px 0; }
+    .events { display:flex; gap:8px; align-items:stretch; overflow-x:auto; padding:9px; }
+    .event { flex:0 0 190px; border-left:2px solid var(--line); padding:4px 8px; background:#0a1519; }
+    .event time { display:block; color:var(--muted); font-size:9px; }
+    .event b { display:block; margin:3px 0; font-size:10px; color:var(--cyan); letter-spacing:.05em; }
+    .event span { color:#a7bac0; display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .empty { color:var(--muted); font-style:italic; }
+    @media (max-width: 1050px) {
+      main { grid-template-columns:1.7fr 1fr; }
+      .headline .metric:nth-child(n+4) { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="headline">
+      <div class="metric"><label>Mission</label><strong id="mission-mode">SEARCH</strong></div>
+      <div class="metric"><label>Target</label><strong id="target-state">NONE</strong></div>
+      <div class="metric"><label>Observed by</label><strong id="target-sensor">—</strong></div>
+      <div class="metric"><label>Uncertainty</label><strong id="uncertainty">—</strong></div>
+      <div class="metric"><label>Submission</label><strong id="submission">DISABLED</strong></div>
+    </div>
+    <div id="replay-controls">
+      <button id="play-button">Pause</button>
+      <select id="speed"><option>.5</option><option selected>1</option><option>2</option><option>4</option></select>
+      <span id="replay-time">0:00 / 0:00</span>
+    </div>
+    <div class="chip"><span class="dot" id="socket-dot"></span><span id="socket-label">connecting</span></div>
+  </header>
+  <div class="sim-alert" id="sim-alert"><b>SIMULATOR NOT CONNECTED</b><span id="sim-alert-detail"></span></div>
+
+  <main>
+    <section class="camera-grid" id="camera-grid"></section>
+    <aside class="side">
+      <section class="panel">
+        <div class="panel-title"><span>Camera map</span><span class="panel-title-meta"><span class="map-credit"><a href="https://www.esri.com/en-us/legal/terms/data-attributions" target="_blank" rel="noopener">Map © Esri</a> · <a href="https://mapterhorn.com/attribution" target="_blank" rel="noopener">Terrain © Mapterhorn</a></span><span id="site-name">SITE UNKNOWN</span></span></div>
+        <div class="map-wrap">
+          <div id="tactical-map"></div>
+          <div class="map-tools">
+            <div class="map-tool-group"><button class="map-tool active" data-map-mode="imagery">Imagery</button><button class="map-tool" data-map-mode="3d">3D</button></div>
+            <div class="map-tool-group"><button class="map-tool" id="map-fit">Fit all</button><button class="map-tool" id="map-north">North</button><button class="map-tool" id="map-follow">Follow</button></div>
+          </div>
+          <div class="no-map" id="no-map">Basemap unavailable · live positions only</div>
+        </div>
+      </section>
+      <section class="panel target-panel">
+        <div class="target-visual"><img src="/video/target" alt="Best available target crop"><span class="target-badge" id="target-badge">NO TARGET</span><span class="target-view-label" id="target-view-label">AWAITING CAMERA DETECTION</span></div>
+        <div class="target-info">
+          <div class="row"><span>Position</span><b id="target-position">—</b></div>
+          <div class="row"><span>View</span><b id="target-perspective">—</b></div>
+          <div class="row"><span>Heading</span><b id="target-heading">—</b></div>
+          <div class="row"><span>Speed</span><b id="target-speed">—</b></div>
+          <div class="row"><span>Age</span><b id="target-age">—</b></div>
+          <svg class="target-inset" id="target-inset" viewBox="0 0 240 100"></svg>
+        </div>
+      </section>
+    </aside>
+    <section class="panel timeline">
+      <div class="health"><h3>System health</h3><div id="health-list"></div></div>
+      <div class="events" id="events"><span class="empty">Awaiting mission events</span></div>
+    </section>
+  </main>
+
+  <script type="module">
+    const CAMERAS = ['quadcopter','fixed-wing','tower-1','tower-2'];
+    const CAMERA_COLORS = {'quadcopter':'#45d9f5','fixed-wing':'#ffbf69','tower-1':'#48ffbd','tower-2':'#a78bfa'};
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const age = value => value == null ? '—' : value < 1 ? `${Math.round(value*1000)}ms` : `${value.toFixed(1)}s`;
+    const fmtTime = seconds => { seconds=Math.max(0,seconds||0); return `${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`; };
+    const cssState = value => String(value||'').toLowerCase();
+    const emptyCollection = () => ({type:'FeatureCollection',features:[]});
+    let socket, latest, replayPlaying=true, maplibregl, map, mapReady=false, mapConfig=null;
+    let mapMode='imagery', selectedCamera=null, followSelected=false;
+    const cameraMarkers = new Map();
+
+    function cameraCards() {
+      const grid=document.getElementById('camera-grid');
+      grid.innerHTML = CAMERAS.map(name => `
+        <article class="camera-card" id="card-${name}">
+          <img src="/video/${name}" alt="${name} camera">
+          <div class="camera-head"><span class="camera-name">${name.toUpperCase()}</span><span class="camera-meta"><span id="fps-${name}">0 FPS</span><span id="age-${name}">OFFLINE</span></span></div>
+          <div class="camera-foot"><span class="activity" id="activity-${name}">IDLE</span><span class="assignment" id="assignment-${name}">awaiting data</span></div>
+        </article>`).join('');
+      CAMERAS.forEach(name=>document.getElementById(`card-${name}`).addEventListener('click',()=>selectCamera(name,true)));
+    }
+
+    const offsetPosition = (longitude,latitude,east,north) => [
+      longitude+east/(111320*Math.max(.05,Math.cos(latitude*Math.PI/180))),
+      latitude+north/111320
+    ];
+
+    function cameraConeCoordinates(asset) {
+      const telemetry=asset?.telemetry;
+      if(!telemetry)return null;
+      const longitude=Number(telemetry.longitude), latitude=Number(telemetry.latitude);
+      if(!Number.isFinite(longitude)||!Number.isFinite(latitude))return null;
+      const origin=[longitude,latitude], heading=Number(telemetry.yaw_rad||0), half=Number(asset.camera_hfov_deg||60)*Math.PI/360;
+      const range=Math.max(350,Math.min(1400,Number(telemetry.altitude_m||0)*4||600));
+      const endpoint=angle=>offsetPosition(longitude,latitude,Math.sin(angle)*range,Math.cos(angle)*range);
+      return [origin,endpoint(heading-half),endpoint(heading+half),origin];
+    }
+
+    function observationFrom(source,target) {
+      const lat1=source.latitude*Math.PI/180, lat2=target.display_latitude*Math.PI/180;
+      const dLat=lat2-lat1, dLon=(target.display_longitude-source.longitude)*Math.PI/180;
+      const a=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+      const range=6371000*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+      const bearing=(Math.atan2(Math.sin(dLon)*Math.cos(lat2),Math.cos(lat1)*Math.sin(lat2)-Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLon))*180/Math.PI+360)%360;
+      return {range,bearing};
+    }
+
+    function mapStyle(config) {
+      const sources={};
+      const layers=[{id:'background',type:'background',paint:{'background-color':'#071215'}}];
+      if(config){
+        const [west,south,east,north]=config.bounds, margin=2;
+        const outer=[[west-margin,south-margin],[east+margin,south-margin],[east+margin,north+margin],[west-margin,north+margin],[west-margin,south-margin]];
+        sources.imagery={type:'raster',tiles:config.imagery_tiles,tileSize:256,bounds:config.bounds,minzoom:config.minzoom,maxzoom:config.maxzoom};
+        sources.dem={type:'raster-dem',tiles:config.terrain_tiles,tileSize:512,encoding:config.terrain_encoding,bounds:config.bounds,minzoom:config.minzoom,maxzoom:config.maxzoom};
+        sources['site-mask']={type:'geojson',data:{type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[outer,[...config.boundary].reverse()]}}};
+        sources['site-boundary']={type:'geojson',data:{type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[config.boundary]}}};
+        layers.push(
+          {id:'imagery',type:'raster',source:'imagery',paint:{'raster-opacity':.92,'raster-saturation':-.08,'raster-contrast':.08}},
+          {id:'hillshade',type:'hillshade',source:'dem',layout:{visibility:'none'},paint:{'hillshade-exaggeration':.55,'hillshade-shadow-color':'#061014','hillshade-highlight-color':'#d9f0f2','hillshade-accent-color':'#53767e'}},
+          {id:'site-mask',type:'fill',source:'site-mask',paint:{'fill-color':'#020708','fill-opacity':.68}},
+          {id:'site-boundary',type:'line',source:'site-boundary',paint:{'line-color':'#45d9f5','line-opacity':.8,'line-width':1.5,'line-dasharray':[3,2]}}
+        );
+      }
+      return {version:8,sources,layers};
+    }
+
+    async function initializeMap() {
+      try {
+        maplibregl=await import('/static/maplibre-gl.mjs');
+        const response=await fetch('/api/map/config');
+        if(response.ok) mapConfig=await response.json();
+        const center=mapConfig?.center||[-94.822428,71.991960];
+        const siteBounds=mapConfig?[[mapConfig.bounds[0],mapConfig.bounds[1]],[mapConfig.bounds[2],mapConfig.bounds[3]]]:undefined;
+        map=new maplibregl.Map({container:'tactical-map',style:mapStyle(mapConfig),center,zoom:mapConfig?11.4:9,pitch:0,bearing:0,maxBounds:siteBounds,maxPitch:72,attributionControl:false,renderWorldCopies:false,fadeDuration:0});
+        map.on('load',()=>{
+          map.addSource('camera-cones',{type:'geojson',data:emptyCollection()});
+          map.addSource('sightline',{type:'geojson',data:emptyCollection()});
+          map.addSource('target-live',{type:'geojson',data:emptyCollection()});
+          map.addLayer({id:'camera-cones-fill',type:'fill',source:'camera-cones',paint:{'fill-color':'#45d9f5','fill-opacity':.13}});
+          map.addLayer({id:'camera-cones-line',type:'line',source:'camera-cones',paint:{'line-color':'#45d9f5','line-opacity':.8,'line-width':1.2}});
+          map.addLayer({id:'sightline',type:'line',source:'sightline',paint:{'line-color':'#ffbf69','line-width':2,'line-dasharray':[2,2]}});
+          map.addLayer({id:'target-uncertainty',type:'circle',source:'target-live',paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,5,15,18],'circle-color':'rgba(255,191,105,.12)','circle-stroke-color':'#ffbf69','circle-stroke-width':1.5}});
+          map.addLayer({id:'target-live',type:'circle',source:'target-live',paint:{'circle-radius':7,'circle-color':['case',['==',['get','predicted'],true],'rgba(0,0,0,0)','#48ffbd'],'circle-stroke-color':['case',['==',['get','predicted'],true],'#ffbf69','#ffffff'],'circle-stroke-width':2}});
+          mapReady=true;
+          if(mapConfig){
+            const overview=map.cameraForBounds(siteBounds,{padding:24});
+            if(overview)map.setMinZoom(overview.zoom);
+            map.fitBounds(siteBounds,{padding:24,duration:0});
+          }
+          else document.getElementById('no-map').style.display='flex';
+          setMapMode(mapMode);
+          if(latest) updateMap(latest);
+        });
+        map.on('dragstart',()=>{if(followSelected)setFollow(false);});
+      } catch (error) {
+        console.error('Map initialization failed',error);
+        const fallback=document.getElementById('no-map');
+        fallback.textContent='Map unavailable · camera feeds remain active';
+        fallback.style.display='flex';
+      }
+    }
+
+    function setMapMode(mode) {
+      mapMode=mode;
+      document.querySelectorAll('[data-map-mode]').forEach(button=>button.classList.toggle('active',button.dataset.mapMode===mode));
+      if(!mapReady)return;
+      const hasTerrain=Boolean(mapConfig);
+      if(hasTerrain){
+        map.setLayoutProperty('hillshade','visibility',mode==='imagery'?'none':'visible');
+        map.setTerrain(mode==='3d'?{source:'dem',exaggeration:1.35}:null);
+      }
+      map.easeTo({pitch:mode==='3d'?55:0,bearing:mode==='3d'?-18:0,duration:500});
+    }
+
+    function setFollow(enabled) {
+      followSelected=Boolean(enabled&&selectedCamera);
+      document.getElementById('map-follow').classList.toggle('following',followSelected);
+      document.getElementById('map-follow').textContent=followSelected?'Following':'Follow';
+    }
+
+    function selectCamera(name, fly=false) {
+      selectedCamera=name;
+      CAMERAS.forEach(camera=>{
+        document.getElementById(`card-${camera}`)?.classList.toggle('selected',camera===name);
+        cameraMarkers.get(camera)?.getElement().classList.toggle('selected',camera===name);
+      });
+      if(fly&&mapReady)fitCameraCone(name);
+    }
+
+    function fitCameraCone(name) {
+      const coordinates=cameraConeCoordinates(latest?.assets?.[name]);
+      if(!coordinates)return;
+      const bounds=coordinates.reduce((value,point)=>value.extend(point),new maplibregl.LngLatBounds(coordinates[0],coordinates[0]));
+      map.fitBounds(bounds,{padding:{top:52,bottom:48,left:48,right:72},maxZoom:14,duration:550});
+    }
+
+    function fitMap() {
+      if(!mapReady)return;
+      setFollow(false);
+      const coordinates=Object.values(latest?.assets||{}).map(asset=>asset.telemetry&&[asset.telemetry.longitude,asset.telemetry.latitude]).filter(Boolean);
+      const target=latest?.target?.track;
+      if(target)coordinates.push([target.display_longitude,target.display_latitude]);
+      if(!coordinates.length&&mapConfig)coordinates.push([mapConfig.bounds[0],mapConfig.bounds[1]],[mapConfig.bounds[2],mapConfig.bounds[3]]);
+      if(!coordinates.length)return;
+      const bounds=coordinates.reduce((value,point)=>value.extend(point),new maplibregl.LngLatBounds(coordinates[0],coordinates[0]));
+      map.fitBounds(bounds,{padding:42,maxZoom:14,duration:550});
+    }
+
+    function updateMap(state) {
+      if(!mapReady)return;
+      const coneFeatures=[];
+      Object.values(state.assets||{}).forEach(asset=>{
+        const telemetry=asset.telemetry;
+        if(!telemetry)return;
+        const cone=cameraConeCoordinates(asset);
+        if(!cone)return;
+        const origin=cone[0];
+        coneFeatures.push({type:'Feature',properties:{camera:asset.name},geometry:{type:'Polygon',coordinates:[cone]}});
+        let marker=cameraMarkers.get(asset.name);
+        if(!marker){
+          const element=document.createElement('div');element.className='camera-map-marker';element.dataset.label=asset.name;element.style.setProperty('--camera-color',CAMERA_COLORS[asset.name]||'#61a8ff');element.addEventListener('click',event=>{event.stopPropagation();selectCamera(asset.name,true);});
+          marker=new maplibregl.Marker({element,anchor:'center'}).setLngLat(origin).addTo(map);cameraMarkers.set(asset.name,marker);
+        }
+        marker.setLngLat(origin);marker.getElement().classList.toggle('offline',asset.connection==='OFFLINE');marker.getElement().classList.toggle('selected',asset.name===selectedCamera);
+      });
+      map.getSource('camera-cones').setData({type:'FeatureCollection',features:coneFeatures});
+      const target=state.target?.track, targetFeatures=[];
+      if(target&&state.target.status!=='LOST')targetFeatures.push({type:'Feature',properties:{predicted:state.target.status==='PREDICTED'},geometry:{type:'Point',coordinates:[target.display_longitude,target.display_latitude]}});
+      map.getSource('target-live').setData({type:'FeatureCollection',features:targetFeatures});
+      const sourceName=state.target?.source_camera||state.target?.observed_by, source=state.assets?.[sourceName]?.telemetry;
+      const sightline=target&&source?{type:'FeatureCollection',features:[{type:'Feature',properties:{camera:sourceName},geometry:{type:'LineString',coordinates:[[source.longitude,source.latitude],[target.display_longitude,target.display_latitude]]}}]}:emptyCollection();
+      map.getSource('sightline').setData(sightline);
+      if(followSelected){const telemetry=state.assets?.[selectedCamera]?.telemetry;if(telemetry)map.easeTo({center:[telemetry.longitude,telemetry.latitude],duration:180});}
+    }
+
+    function targetInset(state) {
+      const svg=document.getElementById('target-inset'), target=state.target?.track;
+      if(!target){svg.innerHTML='<text x="120" y="53" text-anchor="middle" fill="#789097" font-size="10">NO TRACK</text>';return;}
+      const cx=target.x_m,cy=target.y_m, radius=350, p=(x,y)=>[120+(x-cx)/radius*105,50-(y-cy)/radius*42];
+      let h='<rect width="240" height="100" fill="#071215"/><circle cx="120" cy="50" r="35" class="uncertainty"/>';
+      Object.values(state.assets||{}).forEach(a=>{if(a.projected){const [x,y]=p(a.projected.x_m,a.projected.y_m);if(x>-10&&x<250&&y>-10&&y<110)h+=`<circle cx="${x}" cy="${y}" r="4" class="asset-marker"/>`;}});
+      h+=`<circle cx="120" cy="50" r="6" class="target-marker ${state.target.status==='PREDICTED'?'predicted':''}"/>`;
+      svg.innerHTML=h;
+    }
+
+    function render(state) {
+      latest=state;
+      const mode=state.mission?.mode||'SEARCH', targetState=state.target?.status||'NONE';
+      const modeEl=document.getElementById('mission-mode'); modeEl.textContent=mode; modeEl.className=cssState(mode);
+      const targetEl=document.getElementById('target-state'); targetEl.textContent=targetState; targetEl.className=cssState(targetState);
+      document.getElementById('target-sensor').textContent=state.target?.observed_by||'—';
+      document.getElementById('submission').textContent=state.submission?.status||'UNKNOWN';
+      const track=state.target?.track;
+      document.getElementById('uncertainty').textContent=track?`${track.display_uncertainty_m.toFixed(1)} m`:'—';
+      document.getElementById('target-position').textContent=track?`${track.display_latitude.toFixed(5)}, ${track.display_longitude.toFixed(5)}`:'—';
+      const perspectiveName=state.target?.source_camera||state.target?.observed_by, perspectiveSource=state.assets?.[perspectiveName]?.telemetry;
+      if(track&&perspectiveSource){const view=observationFrom(perspectiveSource,track);document.getElementById('target-perspective').textContent=`${perspectiveName} · ${view.bearing.toFixed(0)}° · ${view.range<1000?`${view.range.toFixed(0)} m`:`${(view.range/1000).toFixed(1)} km`}`;}
+      else document.getElementById('target-perspective').textContent='—';
+      if(track){const heading=(Math.atan2(track.velocity_east_mps,track.velocity_north_mps)*180/Math.PI+360)%360;document.getElementById('target-heading').textContent=(track.velocity_east_mps||track.velocity_north_mps)?`${heading.toFixed(0)}°`:'—';}
+      else document.getElementById('target-heading').textContent='—';
+      if(track){const speed=Math.hypot(track.velocity_east_mps,track.velocity_north_mps);document.getElementById('target-speed').textContent=`${speed.toFixed(1)} m/s · ${(speed*1.94384).toFixed(1)} kn`;}
+      else document.getElementById('target-speed').textContent='—';
+      document.getElementById('target-age').textContent=age(state.target?.age_s);
+      const badge=document.getElementById('target-badge'); badge.textContent=targetState; badge.className=`target-badge ${cssState(targetState)}`;
+      const targetSource=state.target?.source_camera, lastSource=state.target?.observed_by;
+      document.getElementById('target-view-label').textContent=targetSource?`${targetSource.toUpperCase()} · BEST DETECTED VIEW`:lastSource&&targetState==='PREDICTED'?`${lastSource.toUpperCase()} · LAST OBSERVATION`:'AWAITING CAMERA DETECTION';
+      document.getElementById('site-name').textContent=state.site?.name?.toUpperCase()||'AUTO-FIT';
+      CAMERAS.forEach(name=>{
+        const a=state.assets?.[name]||{};
+        document.getElementById(`fps-${name}`).textContent=`${(a.fps||0).toFixed(1)} FPS`;
+        const ageEl=document.getElementById(`age-${name}`); ageEl.textContent=age(a.frame_age_s); ageEl.className=cssState(a.connection);
+        const act=document.getElementById(`activity-${name}`);act.textContent=a.activity||'IDLE';act.className=`activity ${cssState(a.activity)}`;
+        document.getElementById(`assignment-${name}`).textContent=a.assignment||(a.frame_age_s==null&&a.camera_endpoint?a.camera_endpoint:a.reason)||'—';
+      });
+      const noFrames=CAMERAS.every(name=>state.assets?.[name]?.frame_age_s==null);
+      const simAlert=document.getElementById('sim-alert');
+      simAlert.classList.toggle('visible',noFrames);
+      document.getElementById('sim-alert-detail').textContent=noFrames?`${state.runtime?.sim_host||'unknown host'} · check config and network`:'';
+      health(state); events(state.events||[]); updateMap(state); targetInset(state); replay(state.replay);
+    }
+
+    function health(state) {
+      const rows=CAMERAS.map(name=>{const a=state.assets?.[name]||{};return `<div class="health-row"><span>${name}</span><b class="${cssState(a.connection)}">${a.connection||'OFFLINE'}</b></div>`;});
+      document.getElementById('health-list').innerHTML=rows.join('');
+    }
+
+    function events(items) {
+      const visible=items.filter(event=>event.kind!=='telemetry.updated').slice(-12).reverse();
+      document.getElementById('events').innerHTML=visible.length?visible.map(e=>`<div class="event"><time>${new Date(e.timestamp).toLocaleTimeString()}</time><b>${esc(e.kind)}</b><span>${esc(e.source)} · ${esc(e.payload?.reason||e.payload?.detail||e.payload?.action||'')}</span></div>`).join(''):'<span class="empty">Awaiting mission events</span>';
+    }
+
+    function replay(data) {
+      const controls=document.getElementById('replay-controls'); if(!data){controls.style.display='none';return;} controls.style.display='flex';
+      replayPlaying=data.playing;document.getElementById('play-button').textContent=data.playing?'Pause':'Play';
+      document.getElementById('speed').value=String(data.speed);document.getElementById('replay-time').textContent=`${fmtTime(data.position_s)} / ${fmtTime(data.duration_s)}`;
+    }
+
+    function connect() {
+      socket=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
+      socket.onopen=()=>{document.getElementById('socket-label').textContent='live';document.getElementById('socket-dot').className='dot online';};
+      socket.onmessage=e=>{const data=JSON.parse(e.data);if(!data.error)render(data);};
+      socket.onclose=()=>{document.getElementById('socket-label').textContent='reconnecting';document.getElementById('socket-dot').className='dot offline';setTimeout(connect,1000);};
+    }
+    document.getElementById('play-button').onclick=()=>socket?.send(JSON.stringify({action:'playing',value:!replayPlaying}));
+    document.getElementById('speed').onchange=e=>socket?.send(JSON.stringify({action:'speed',value:Number(e.target.value)}));
+    document.querySelectorAll('[data-map-mode]').forEach(button=>button.addEventListener('click',()=>setMapMode(button.dataset.mapMode)));
+    document.getElementById('map-fit').addEventListener('click',fitMap);
+    document.getElementById('map-north').addEventListener('click',()=>mapReady&&map.easeTo({bearing:0,pitch:mapMode==='3d'?55:0,duration:400}));
+    document.getElementById('map-follow').addEventListener('click',()=>setFollow(!followSelected));
+    cameraCards();connect();initializeMap();
+  </script>
+</body>
+</html>
