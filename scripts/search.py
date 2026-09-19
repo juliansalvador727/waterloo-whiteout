@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-
-from whiteout import Copter, CopterMode, Plane, VehicleStateError
-
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from whiteout import Copter, CopterMode, Plane, VehicleStateError  # noqa: E402
+
+
 DEFAULT_MISSIONS = {
     "quadcopter": ROOT / "missions" / "quadcopter_search.waypoints",
     "fixed-wing": ROOT / "missions" / "fixed_wing_search.waypoints",
