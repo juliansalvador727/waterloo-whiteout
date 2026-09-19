@@ -1,4 +1,7 @@
 # Dominion Dynamics WHITEOUT controller scaffold
+67
+
+- Evan Yu
 
 WHITEOUT is a small, safety-first Python 3.11+ foundation for ingesting simulator imagery and telemetry, estimating a target position, maintaining a track, recommending observation actions, and explicitly controlling simulator assets through MAVProxy.
 
