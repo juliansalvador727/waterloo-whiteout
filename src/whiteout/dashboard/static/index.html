@@ -82,6 +82,7 @@
     .site-border { fill:none; stroke:#46636b; stroke-width:1.5; stroke-dasharray:5 5; }
     .search-path { fill:none; stroke:var(--blue); stroke-width:2; stroke-dasharray:4 4; opacity:.8; }
     .fov { fill:rgba(69,217,245,.09); stroke:rgba(69,217,245,.55); stroke-width:1; }
+    .heading-cone { fill:rgba(69,217,245,.12); stroke:rgba(69,217,245,.7); stroke-width:1.2; }
     .coverage { fill:rgba(72,255,189,.025); stroke:none; }
     .asset-marker { fill:#071013; stroke:var(--cyan); stroke-width:2.4; }
     .target-marker { fill:var(--mint); stroke:#fff; stroke-width:1.5; filter:drop-shadow(0 0 6px var(--mint)); }
@@ -93,6 +94,7 @@
     .target-visual { position:relative; min-width:0; overflow:hidden; background:#020708; }
     .target-visual img { width:100%; height:100%; object-fit:contain; }
     .target-badge { position:absolute; top:8px; left:8px; padding:4px 8px; border:1px solid currentColor; border-radius:3px; background:#071013d9; font-weight:800; letter-spacing:.1em; }
+    .target-view-label { position:absolute; left:8px; bottom:7px; color:#bed0d5; font-size:9px; letter-spacing:.1em; text-shadow:0 1px 4px #000; }
     .target-info { border-left:1px solid var(--line); padding:9px; display:flex; flex-direction:column; gap:7px; }
     .target-info .row { display:flex; justify-content:space-between; gap:8px; color:var(--muted); }
     .target-info .row b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; text-align:right; }
@@ -135,14 +137,15 @@
     <section class="camera-grid" id="camera-grid"></section>
     <aside class="side">
       <section class="panel">
-        <div class="panel-title"><span>Tactical overview · EPSG:3413 metres</span><span id="site-name">SITE UNKNOWN</span></div>
+        <div class="panel-title"><span>Camera minimap · heading / horizontal FOV</span><span id="site-name">SITE UNKNOWN</span></div>
         <div class="map-wrap"><svg id="tactical-map" viewBox="0 0 900 600" preserveAspectRatio="none"></svg><div class="no-map" id="no-map">Awaiting site metadata</div></div>
       </section>
       <section class="panel target-panel">
-        <div class="target-visual"><img src="/video/target" alt="Best available target crop"><span class="target-badge" id="target-badge">NO TARGET</span></div>
+        <div class="target-visual"><img src="/video/target" alt="Best available target crop"><span class="target-badge" id="target-badge">NO TARGET</span><span class="target-view-label">BEST DETECTED VIEW</span></div>
         <div class="target-info">
           <div class="row"><span>Position</span><b id="target-position">—</b></div>
           <div class="row"><span>Heading</span><b id="target-heading">—</b></div>
+          <div class="row"><span>Speed</span><b id="target-speed">—</b></div>
           <div class="row"><span>Age</span><b id="target-age">—</b></div>
           <svg class="target-inset" id="target-inset" viewBox="0 0 240 100"></svg>
         </div>
@@ -193,7 +196,17 @@
         (asset.coverage||[]).forEach(poly=>{if(poly.length>2)h+=`<polygon class="coverage" points="${polygon(poly)}"/>`;});
         if((asset.fov_footprint||[]).length>2)h+=`<polygon class="fov" points="${polygon(asset.fov_footprint)}"/>`;
         if((asset.search_path||[]).length>1)h+=`<polyline class="search-path" points="${polygon(asset.search_path)}"/>`;
-        if(asset.projected){const [x,y]=pt(asset.projected.x_m,asset.projected.y_m);h+=`<circle class="asset-marker" cx="${x}" cy="${y}" r="7"/><text class="map-label" x="${x+11}" y="${y+4}">${esc(asset.name)}</text>`;}
+        if(asset.projected){
+          const [x,y]=pt(asset.projected.x_m,asset.projected.y_m), telemetry=asset.telemetry;
+          if(telemetry && asset.camera_hfov_deg){
+            const heading=Number(telemetry.yaw_rad||0), half=Number(asset.camera_hfov_deg)*Math.PI/360;
+            const range=Math.min(xmax-xmin,ymax-ymin)*0.13;
+            const edge=angle=>pt(asset.projected.x_m+Math.sin(angle)*range,asset.projected.y_m+Math.cos(angle)*range);
+            const left=edge(heading-half), right=edge(heading+half);
+            h+=`<polygon class="heading-cone" points="${x},${y} ${left[0]},${left[1]} ${right[0]},${right[1]}"/>`;
+          }
+          h+=`<circle class="asset-marker" cx="${x}" cy="${y}" r="7"/><text class="map-label" x="${x+11}" y="${y+4}">${esc(asset.name)}</text>`;
+        }
       });
       const target=state.target?.track;
       if(target && state.target.status!=='LOST'){
@@ -226,6 +239,8 @@
       document.getElementById('target-position').textContent=track?`${track.display_latitude.toFixed(5)}, ${track.display_longitude.toFixed(5)}`:'—';
       if(track){const heading=(Math.atan2(track.velocity_east_mps,track.velocity_north_mps)*180/Math.PI+360)%360;document.getElementById('target-heading').textContent=(track.velocity_east_mps||track.velocity_north_mps)?`${heading.toFixed(0)}°`:'—';}
       else document.getElementById('target-heading').textContent='—';
+      if(track){const speed=Math.hypot(track.velocity_east_mps,track.velocity_north_mps);document.getElementById('target-speed').textContent=`${speed.toFixed(1)} m/s · ${(speed*1.94384).toFixed(1)} kn`;}
+      else document.getElementById('target-speed').textContent='—';
       document.getElementById('target-age').textContent=age(state.target?.age_s);
       const badge=document.getElementById('target-badge'); badge.textContent=targetState; badge.className=`target-badge ${cssState(targetState)}`;
       document.getElementById('site-name').textContent=state.site?.name?.toUpperCase()||'AUTO-FIT';

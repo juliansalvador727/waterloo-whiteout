@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import math
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from .models import Telemetry
 
@@ -110,6 +110,14 @@ class ReadOnlyMavlink:
         if synchronized:
             values = self._attitude  # type: ignore[assignment]
             attitude_timestamp = self._attitude_received_at
+        else:
+            heading_cdeg = getattr(message, "hdg", 65535)
+            yaw_rad = (
+                math.radians(float(heading_cdeg) / 100.0)
+                if heading_cdeg not in (None, 65535)
+                else None
+            )
+            values = (None, None, yaw_rad)
         return Telemetry(
             vehicle=self.vehicle,
             latitude=float(message.lat) / 1e7,  # type: ignore[attr-defined]

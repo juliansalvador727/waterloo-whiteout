@@ -83,6 +83,20 @@ class DashboardStateTests(unittest.TestCase):
         self.assertGreater(y_m, -1_271_830.9)
         self.assertLess(y_m, -1_265_362.1)
 
+    def test_runtime_exposes_camera_horizontal_fov(self) -> None:
+        from whiteout.config import config_from_mapping
+
+        config = config_from_mapping(
+            {"cameras": [{"name": "quadcopter", "port": 8600, "hfov_deg": 90}]}
+        )
+        runtime = DashboardRuntime(
+            MissionStateStore(camera_names=("quadcopter",)), mode="live", config=config
+        )
+
+        self.assertEqual(
+            runtime.snapshot()["assets"]["quadcopter"]["camera_hfov_deg"], 90.0
+        )
+
 
 class DashboardRecordingTests(unittest.TestCase):
     def test_recording_redacts_secrets_and_replays_state(self) -> None:

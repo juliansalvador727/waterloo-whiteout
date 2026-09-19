@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator
 
 from ..camera import CameraFrame, MjpegCamera
 from ..config import AppConfig, load_config
+from ..mavlink import MavlinkUnavailable, ReadOnlyMavlink
 from .recording import SessionRecorder, SessionReplay
 from .state import MissionStateStore, SiteMetadata
 
@@ -54,6 +55,11 @@ class DashboardRuntime:
                 "position_s": self.replay.position_s,
                 "duration_s": self.replay.duration_s,
             }
+        if self.config is not None:
+            cameras = {camera.name: camera for camera in self.config.cameras}
+            for name, asset in state["assets"].items():
+                camera = cameras.get(name)
+                asset["camera_hfov_deg"] = camera.hfov_deg if camera is not None else None
         return state
 
     def start_live(self) -> None:
@@ -65,6 +71,15 @@ class DashboardRuntime:
                 target=self._camera_worker,
                 args=(camera_config.name, camera_config.port, camera_config.path),
                 name=f"camera-{camera_config.name}",
+                daemon=True,
+            )
+            thread.start()
+            self._threads.append(thread)
+        for mavlink_config in self.config.mavlink:
+            thread = threading.Thread(
+                target=self._telemetry_worker,
+                args=(mavlink_config.name, mavlink_config.port),
+                name=f"telemetry-{mavlink_config.name}",
                 daemon=True,
             )
             thread.start()
@@ -105,6 +120,21 @@ class DashboardRuntime:
             if self._stop.is_set():
                 return
             self.store.update_frame(frame)
+
+    def _telemetry_worker(self, name: str, port: int) -> None:
+        assert self.config is not None
+        telemetry = ReadOnlyMavlink(name, self.config.sim_host, port)
+        try:
+            # The simulator endpoints are UDP listeners, so one benign GCS
+            # heartbeat is required to register this read-only peer.
+            telemetry.connect(initiate_telemetry=True)
+        except MavlinkUnavailable:
+            return
+        while not self._stop.is_set():
+            update = telemetry.poll()
+            if update is not None:
+                self.store.update_telemetry(update)
+            time.sleep(0.05)
 
     async def start_replay(self) -> None:
         if self.replay is None:

@@ -20,6 +20,7 @@ dev = []
 dashboard = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "pymavlink>=2.4",
     "pyproj>=3.6",
     "opencv-python-headless>=4.8",
 ]
