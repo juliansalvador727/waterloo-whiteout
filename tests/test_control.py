@@ -129,7 +129,7 @@ class TypedControllerTests(unittest.TestCase):
             east = (end_lon - start_lon) * 111_320 * math.cos(mean_lat)
             headings.append(math.degrees(math.atan2(east, north)) % 360)
         for heading in headings:
-            self.assertAlmostEqual(heading, 254.96, places=1)
+            self.assertAlmostEqual(heading, 259.96, places=1)
 
     def test_static_landing_starts_over_ocean_with_required_clearance(self) -> None:
         rows = [line.split("\t") for line in LANDING_MISSION.read_text().splitlines()[1:]]
@@ -141,10 +141,15 @@ class TypedControllerTests(unittest.TestCase):
         )
         self.assertGreaterEqual(float(first_navigation_waypoint[10]), 75.99)
 
-        touchdown = rows[-1]
+        start_position = rows[0]
         self.assertEqual(
-            (float(touchdown[8]), float(touchdown[9])),
+            (float(start_position[8]), float(start_position[9])),
             (71.9982129, -94.8420161),
+        )
+        land_aim = rows[-1]
+        self.assertEqual(
+            (float(land_aim[8]), float(land_aim[9])),
+            (71.9981315, -94.8435044),
         )
         mountain_latitude = 71.995786
         navigated_rows = [row for row in rows if int(row[3]) in (16, 21)]
