@@ -148,11 +148,15 @@ class MavProxySession:
             with self._output_condition:
                 self._output_condition.notify_all()
 
-    def wait_for_output(self, text: str, *, timeout: float = 10.0) -> bool:
+    def wait_for_output(
+        self, text: str, *, timeout: float = 10.0, start: int = 0
+    ) -> bool:
         """Wait until captured MAVProxy output contains ``text``."""
+        if start < 0:
+            raise ValueError("output start position cannot be negative")
         deadline = time.monotonic() + timeout
         with self._output_condition:
-            while text not in "".join(self._output_lines):
+            while text not in "".join(self._output_lines)[start:]:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or (self._process is not None and not self.running):
                     return False

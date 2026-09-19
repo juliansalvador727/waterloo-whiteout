@@ -59,7 +59,7 @@ with Copter(host="10.99.0.1").controller() as copter:
     copter.set_mode(CopterMode.GUIDED)
     copter.arm()
     copter.takeoff(10)
-    copter.return_to_launch()
+    copter.autoland()
 
 with Plane(host="10.99.0.1").controller() as plane:
     plane.set_mode(PlaneMode.LOITER)
@@ -78,7 +78,9 @@ python scripts/test_fly.py quadcopter --confirm-flight
 python scripts/test_fly.py fixed-wing --confirm-flight
 ```
 
-The quadcopter enters GUIDED mode, takes off to 10 m, holds for 15 seconds, and switches to RTL. The fixed-wing enters TAKEOFF mode, arms, holds for 15 seconds, and switches to RTL. Use `--altitude-m` and `--hold-seconds` to change those bounded defaults.
+The quadcopter enters GUIDED mode, takes off to 10 m, holds for 15 seconds, then enters LAND mode and keeps MAVProxy open for another 45 seconds. The fixed-wing enters TAKEOFF mode, climbs for 45 seconds, uploads `missions/arctic_sim_fixed_wing_land.waypoints`, waits for MAVProxy to confirm the upload, enters AUTO, and keeps the connection open for 120 seconds while it lands. Use `--altitude-m`, `--hold-seconds`, and `--landing-seconds` to change those bounded defaults.
+
+The included fixed-wing mission is aligned to the default arctic-sim runway declared by `ASSET_3` in arctic-sim's `.env.example`. If the fixed-wing spawn/runway changes, supply a matching QGC WPL mission with `--landing-mission PATH`; do not reuse the default coordinates at another site.
 
 The `Boat` class records the reserved boat role, but its `bundled` flag is false because arctic-sim does not currently include that model. A boat session therefore cannot be opened.
 

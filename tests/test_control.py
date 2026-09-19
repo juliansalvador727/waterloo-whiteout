@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from whiteout.control import (
@@ -11,6 +12,13 @@ from whiteout.control import (
     TowerController,
 )
 from whiteout.objects import Copter, Plane, Tower
+
+
+LANDING_MISSION = (
+    Path(__file__).resolve().parents[1]
+    / "missions"
+    / "arctic_sim_fixed_wing_land.waypoints"
+)
 
 
 class TypedControllerTests(unittest.TestCase):
@@ -33,7 +41,7 @@ class TypedControllerTests(unittest.TestCase):
             copter.arm()
             copter.takeoff(20)
             copter.set_velocity(2, 0, -0.5)
-            copter.return_to_launch()
+            copter.autoland()
 
         self.assertEqual(
             [str(call.args[0]) for call in session.send.call_args_list],
@@ -42,7 +50,7 @@ class TypedControllerTests(unittest.TestCase):
                 "arm throttle",
                 "takeoff 20",
                 "velocity 2 0 -0.5",
-                "mode RTL",
+                "mode LAND",
             ],
         )
         session.close.assert_called_once_with()
@@ -57,11 +65,19 @@ class TypedControllerTests(unittest.TestCase):
         controller.start()
         controller.takeoff()
         controller.loiter()
+        controller.autoland(LANDING_MISSION)
         controller.close()
 
+        commands = [call.args[0] for call in session.send.call_args_list]
         self.assertEqual(
-            [str(call.args[0]) for call in session.send.call_args_list],
+            [str(command) for command in commands[:3]],
             ["mode TAKEOFF", "arm throttle", "mode LOITER"],
+        )
+        self.assertEqual(commands[3].name, "wp")
+        self.assertEqual(commands[3].arguments, ("load", str(LANDING_MISSION)))
+        self.assertEqual(str(commands[4]), "mode AUTO")
+        session.wait_for_output.assert_any_call(
+            "Sent all ", timeout=15.0, start=len("online system 1")
         )
 
     def test_tower_functions_use_cmdlong_without_optional_servo_module(self) -> None:

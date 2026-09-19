@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from enum import Enum
+from os import PathLike
+from pathlib import Path
 from typing import Generic, Self, TypeVar
 
 from .mavproxy import MavProxySession
@@ -11,6 +13,10 @@ from .objects import Copter, MavProxyCommand, Plane, RepositoryObject, Tower
 
 class MavProxyConnectionError(ConnectionError):
     """Raised when a managed controller cannot establish a MAVProxy link."""
+
+
+class MissionUploadError(RuntimeError):
+    """Raised when MAVProxy does not confirm a mission upload."""
 
 
 class CopterMode(str, Enum):
@@ -121,6 +127,10 @@ class CopterController(ObjectController[Copter]):
     def land(self) -> None:
         self.set_mode(CopterMode.LAND)
 
+    def autoland(self) -> None:
+        """Enter ArduCopter LAND mode."""
+        self.land()
+
     def return_to_launch(self) -> None:
         self.set_mode(CopterMode.RTL)
 
@@ -169,6 +179,29 @@ class PlaneController(ObjectController[Plane]):
 
     def return_to_launch(self) -> None:
         self.set_mode(PlaneMode.RTL)
+
+    def autoland(
+        self,
+        mission_path: str | PathLike[str],
+        *,
+        upload_timeout_s: float = 15.0,
+    ) -> None:
+        """Upload a landing mission and enter ArduPlane AUTO mode."""
+        if upload_timeout_s <= 0:
+            raise ValueError("mission upload timeout must be positive")
+        mission = Path(mission_path).resolve()
+        if not mission.is_file():
+            raise FileNotFoundError(f"landing mission not found: {mission}")
+
+        checkpoint = len(self.session.output)
+        self._send(self.vehicle.load_mission(str(mission)))
+        if not self.session.wait_for_output(
+            "Sent all ", timeout=upload_timeout_s, start=checkpoint
+        ):
+            raise MissionUploadError(
+                f"MAVProxy did not confirm the landing mission upload: {mission}"
+            )
+        self.set_mode(PlaneMode.AUTO)
 
     def set_speed(self, speed_mps: float) -> None:
         self._send(self.vehicle.set_speed(speed_mps))
