@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whiteout"
+version = "0.1.0"
+description = "Safety-first controller scaffold for Dominion Dynamics WHITEOUT"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Proprietary"}
+dependencies = []
+
+[project.optional-dependencies]
+camera = ["opencv-python-headless>=4.8"]
+mavlink = ["pymavlink>=2.4"]
+yaml = ["PyYAML>=6"]
+dev = []
+
+[project.scripts]
+whiteout = "whiteout.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.unittest]
+start-directory = "tests"
+

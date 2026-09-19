@@ -1,0 +1,52 @@
+sim_host: ${SIM_HOST:-127.0.0.1}
+placement_owner: unassigned
+
+cameras:
+  - name: quadcopter
+    port: 8600
+    path: /stream
+    width: 640
+    height: 480
+    hfov_deg: 114.6
+    vfov_deg: 99.4
+  - name: fixed-wing
+    port: 8610
+    path: /stream
+    width: 640
+    height: 360
+    hfov_deg: 69.0
+    vfov_deg: 42.6
+  - name: tower-1
+    port: 8630
+    path: /stream
+    width: 640
+    height: 360
+    hfov_deg: 60.0
+    vfov_deg: 36.1
+  - name: tower-2
+    port: 8640
+    path: /stream
+    width: 640
+    height: 360
+    hfov_deg: 60.0
+    vfov_deg: 36.1
+
+mavlink:
+  - name: quadcopter
+    port: 14550
+  - name: fixed-wing
+    port: 14560
+  - name: tower-1
+    port: 14580
+  - name: tower-2
+    port: 14590
+
+track_api:
+  allow_submission: false
+  endpoint: ${DOMINION_TRACK_API_ENDPOINT:-}
+  name: ${DOMINION_TRACK_NAME:-Sierra One}
+  # Leave false until Dominion confirms the expected speed units.
+  include_speed: false
+
+logging:
+  jsonl_path: null
