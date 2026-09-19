@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import re
 from pathlib import Path
 
 import cv2
@@ -13,7 +14,6 @@ import torch
 from torchvision.ops import nms
 from ultralytics import YOLO
 
-COCO_BOAT = 8
 BOAT, ICE = 0, 1
 
 
@@ -33,7 +33,9 @@ def boat_boxes(model: YOLO, image: np.ndarray, conf: float) -> list[tuple[float,
     height, width = image.shape[:2]
     origins = tiles(width, height)
     crops = [image[y : y + 640, x : x + 640] for x, y in origins]
-    results = model.predict(crops, imgsz=1280, conf=conf, classes=[COCO_BOAT], verbose=False)
+    # Boat is class 8 in COCO weights and class 0 in our fine-tuned weights.
+    boat_id = next(index for index, name in model.names.items() if name == "boat")
+    results = model.predict(crops, imgsz=1280, conf=conf, classes=[boat_id], verbose=False)
     boxes, scores = [], []
     for (x, y), result in zip(origins, results, strict=True):
         for (x1, y1, x2, y2), score in zip(result.boxes.xyxy.tolist(), result.boxes.conf.tolist(), strict=True):
@@ -59,6 +61,42 @@ def ice_boxes(image: np.ndarray, min_area: int) -> list[tuple[float, float, floa
     return boxes
 
 
+def red_hull_box(image: np.ndarray, min_pixels: int = 4) -> tuple[float, float, float, float] | None:
+    """Box around the largest red blob (the boat's hull), padded to cover the superstructure."""
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    red = (((hue <= 8) | (hue >= 170)) & (sat > 90) & (val > 60)).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(cv2.dilate(red, np.ones((5, 5), np.uint8)))
+    best, best_pixels = None, min_pixels - 1
+    for index in range(1, count):
+        pixels = int(red[labels == index].sum())
+        if pixels > best_pixels:
+            best, best_pixels = index, pixels
+    if best is None:
+        return None
+    x, y, w, h = stats[best][:4]
+    height, width = image.shape[:2]
+    pad = max(3, int(0.3 * max(w, h)))
+    fallback = (max(0, x - pad), max(0, y - pad), min(width, x + w + pad), min(height, y + h + pad))
+
+    # Grow to the whole ship: the non-dark region touching the red blob, within a local window.
+    reach = max(30, 3 * max(w, h))
+    wx1, wy1 = max(0, x - reach), max(0, y - reach)
+    wx2, wy2 = min(width, x + w + reach), min(height, y + h + reach)
+    solid = ((val[wy1:wy2, wx1:wx2] > 70) | (labels[wy1:wy2, wx1:wx2] == best)).astype(np.uint8)
+    solid = cv2.morphologyEx(solid, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    _, parts, part_stats, _ = cv2.connectedComponentsWithStats(solid)
+    seed = parts[labels[wy1:wy2, wx1:wx2] == best]
+    seed = seed[seed > 0]
+    if seed.size == 0:
+        return fallback
+    px, py, pw, ph = part_stats[np.bincount(seed).argmax()][:4]
+    touches_edge = px == 0 or py == 0 or px + pw >= wx2 - wx1 or py + ph >= wy2 - wy1
+    if touches_edge or pw * ph > 0.6 * (wx2 - wx1) * (wy2 - wy1):
+        return fallback  # merged with ice, land, sky or bright water streaks
+    return (wx1 + px, wy1 + py, wx1 + px + pw, wy1 + py + ph)
+
+
 def overlaps(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
@@ -81,6 +119,11 @@ def main() -> int:
     parser.add_argument("--val-fraction", type=float, default=0.15)
     parser.add_argument("--weights", default="yolov8s.pt")
     parser.add_argument("--preview", action="store_true", help="also write annotated copies to OUT/preview")
+    parser.add_argument(
+        "--boat-in-every-frame",
+        action="store_true",
+        help="fall back to the red hull when YOLO finds no boat; skip frames where neither finds one",
+    )
     args = parser.parse_args()
     if args.every < 1:
         parser.error("--every must be positive")
@@ -101,19 +144,29 @@ def main() -> int:
     if args.preview:
         (args.out / "preview").mkdir(parents=True, exist_ok=True)
 
-    boat_total = ice_total = 0
+    boat_total = ice_total = red_total = 0
+    skipped: list[str] = []
     for path in frames:
         image = cv2.imread(str(path))
         if image is None:
             continue
         height, width = image.shape[:2]
         boats = boat_boxes(model, image, args.boat_conf)
+        red_boats = []
+        if not boats and args.boat_in_every_frame:
+            hull = red_hull_box(image)
+            if hull is None:
+                skipped.append(path.name)
+                continue
+            red_boats = [hull]
+        boats += red_boats
         ice = [box for box in ice_boxes(image, args.ice_min_area) if not any(overlaps(box, b) for b in boats)]
         boat_total += len(boats)
+        red_total += len(red_boats)
         ice_total += len(ice)
 
         split = "val" if rng.random() < args.val_fraction else "train"
-        stem = f"{path.parent.name}-{path.stem}"
+        stem = re.sub(r"[^\w.-]+", "_", f"{path.parent.name}-{path.stem}")
         cv2.imwrite(str(args.out / "images" / split / f"{stem}.jpg"), image)
         lines = [yolo_line(BOAT, box, width, height) for box in boats]
         lines += [yolo_line(ICE, box, width, height) for box in ice]
@@ -123,13 +176,20 @@ def main() -> int:
             for box in ice:
                 cv2.rectangle(image, tuple(map(int, box[:2])), tuple(map(int, box[2:])), (255, 255, 0), 1)
             for box in boats:
-                cv2.rectangle(image, tuple(map(int, box[:2])), tuple(map(int, box[2:])), (0, 0, 255), 2)
+                colour = (0, 255, 0) if box in red_boats else (0, 0, 255)
+                cv2.rectangle(image, tuple(map(int, box[:2])), tuple(map(int, box[2:])), colour, 2)
             cv2.imwrite(str(args.out / "preview" / f"{stem}.jpg"), image)
 
     (args.out / "data.yaml").write_text(
         f"path: {args.out.resolve()}\ntrain: images/train\nval: images/val\nnames:\n  0: boat\n  1: ice\n"
     )
-    print(f"{len(frames)} frames, {boat_total} boat boxes, {ice_total} ice boxes -> {args.out}")
+    print(
+        f"{len(frames) - len(skipped)} frames, {boat_total} boat boxes "
+        f"({red_total} from red hull), {ice_total} ice boxes -> {args.out}"
+    )
+    if skipped:
+        print(f"skipped {len(skipped)} frames with no boat found:")
+        print("\n".join(f"  {name}" for name in skipped))
     return 0
 
 
