@@ -123,9 +123,9 @@ class CameraModel:
         return TOWER_CAMERA
 
 
-QUAD_CAMERA = CameraModel("quadcopter", 640, 480, 114.6, 99.4)
-FIXED_WING_CAMERA = CameraModel("fixed-wing", 640, 360, 69.0, 42.6)
-TOWER_CAMERA = CameraModel("tower", 640, 360, 60.0, 36.1)
+QUAD_CAMERA = CameraModel("quadcopter", 960, 720, 114.6, 99.4)
+FIXED_WING_CAMERA = CameraModel("fixed-wing", 1280, 720, 69.0, 42.6)
+TOWER_CAMERA = CameraModel("tower", 1280, 720, 60.0, 36.1)
 QUADCOPTER_CAMERA = QUAD_CAMERA
 QUAD_CAMERA_MODEL = QUAD_CAMERA
 FIXED_WING_CAMERA_MODEL = FIXED_WING_CAMERA

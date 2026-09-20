@@ -15,7 +15,9 @@ from .track_api import TrackApiClient
 class _CopterController(Protocol):
     def set_mode(self, mode: CopterMode) -> None: ...
 
-    def set_position(self, north_m: float, east_m: float, down_m: float) -> None: ...
+    def goto_global(self, latitude: float, longitude: float, relative_altitude_m: float) -> None: ...
+
+    def set_mission_current(self, sequence: int) -> None: ...
 
     def resume_search(self) -> None: ...
 
@@ -38,6 +40,7 @@ class SimulatorActuator:
     copter: _CopterController
     towers: Mapping[str, _TowerController]
     telemetry_for: Callable[[str], Telemetry | None]
+    _interrupted_mission_sequence: int | None = None
 
     def __call__(self, intent: ControlIntent) -> None:
         asset = intent.asset.strip().lower().replace("_", "-")
@@ -51,21 +54,26 @@ class SimulatorActuator:
 
     def _actuate_copter(self, intent: ControlIntent) -> None:
         if intent.action == "resume_search":
+            if self._interrupted_mission_sequence is not None:
+                self.copter.set_mission_current(self._interrupted_mission_sequence)
             self.copter.resume_search()
+            self._interrupted_mission_sequence = None
             return
         if intent.action not in {"divert", "reacquire"} or intent.target is None:
             raise ValueError(f"unsupported quadcopter intent {intent.action!r}")
         telemetry = self.telemetry_for("quadcopter")
         if telemetry is None:
             raise RuntimeError("quadcopter telemetry is unavailable for target conversion")
-        north_m, east_m = _local_offset_m(
-            telemetry.latitude,
-            telemetry.longitude,
+        if telemetry.relative_altitude_m is None or telemetry.relative_altitude_m <= 0:
+            raise RuntimeError("quadcopter relative altitude is unavailable")
+        if self._interrupted_mission_sequence is None:
+            self._interrupted_mission_sequence = telemetry.mission_sequence
+        self.copter.set_mode(CopterMode.GUIDED)
+        self.copter.goto_global(
             intent.target.latitude,
             intent.target.longitude,
+            telemetry.relative_altitude_m,
         )
-        self.copter.set_mode(CopterMode.GUIDED)
-        self.copter.set_position(north_m, east_m, 0.0)
 
     @staticmethod
     def _actuate_tower(controller: _TowerController, intent: ControlIntent) -> None:

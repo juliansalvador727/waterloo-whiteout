@@ -71,6 +71,15 @@ class Telemetry:
     yaw_rad: float | None = None
     timestamp: datetime = field(default_factory=utc_now)
     attitude_timestamp: datetime | None = None
+    relative_altitude_m: float | None = None
+    mission_sequence: int | None = None
+    mode: str | None = None
+    armed: bool | None = None
+    roll_rate_dps: float | None = None
+    pitch_rate_dps: float | None = None
+    yaw_rate_dps: float | None = None
+    servo_1_pwm: int | None = None
+    servo_2_pwm: int | None = None
 
     @property
     def has_attitude(self) -> bool:

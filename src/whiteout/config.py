@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from .tower import TowerWorldPose
+
 
 class ConfigError(ValueError):
     pass
@@ -45,6 +47,23 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CoordinatorConfig:
+    detector_weights: str = "best.pt"
+    detector_imgsz: int = 1280
+    detector_confidence: float = 0.25
+    quadcopter_mission: str = "missions/quadcopter_search.waypoints"
+    fixed_wing_mission: str = "missions/fixed_wing_search.waypoints"
+    telemetry_skew_s: float = 0.25
+    telemetry_stale_s: float = 2.0
+    tick_hz: float = 10.0
+    command_interval_s: float = 1.0
+    tower_dwell_s: float = 1.0
+    tower_horizontal_overlap: float = 0.20
+    dashboard_bind: str = "127.0.0.1"
+    dashboard_port: int = 8070
+
+
+@dataclass(frozen=True, slots=True)
 class CourseBounds:
     south: float
     west: float
@@ -61,10 +80,10 @@ class CourseBounds:
 
 def _default_cameras() -> tuple[CameraConfig, ...]:
     return (
-        CameraConfig("quadcopter", 8600, width=640, height=480, hfov_deg=114.6, vfov_deg=99.4),
-        CameraConfig("fixed-wing", 8610, width=640, height=360, hfov_deg=69.0, vfov_deg=42.6),
-        CameraConfig("tower-1", 8630, width=640, height=360, hfov_deg=60.0, vfov_deg=36.1),
-        CameraConfig("tower-2", 8640, width=640, height=360, hfov_deg=60.0, vfov_deg=36.1),
+        CameraConfig("quadcopter", 8600, width=960, height=720, hfov_deg=114.6, vfov_deg=99.4),
+        CameraConfig("fixed-wing", 8610, width=1280, height=720, hfov_deg=69.0, vfov_deg=42.6),
+        CameraConfig("tower-1", 8630, width=1280, height=720, hfov_deg=60.0, vfov_deg=36.1),
+        CameraConfig("tower-2", 8640, width=1280, height=720, hfov_deg=60.0, vfov_deg=36.1),
     )
 
 
@@ -88,6 +107,8 @@ class AppConfig:
     track_api: TrackApiConfig = field(default_factory=TrackApiConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     course_bounds: CourseBounds | None = None
+    coordinator: CoordinatorConfig = field(default_factory=CoordinatorConfig)
+    tower_poses: tuple[TowerWorldPose, ...] = ()
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -149,6 +170,8 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
     )
     api_data = data.get("track_api", {})
     log_data = data.get("logging", {})
+    coordinator_data = data.get("coordinator", {})
+    tower_poses_data = data.get("tower_poses", ())
     bounds_data = data.get("course_bounds")
     course_bounds = None
     if bounds_data is not None:
@@ -175,6 +198,30 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
         ),
         logging=LoggingConfig(jsonl_path=log_data.get("jsonl_path")),
         course_bounds=course_bounds,
+        coordinator=CoordinatorConfig(
+            detector_weights=str(coordinator_data.get("detector_weights", "best.pt")),
+            detector_imgsz=int(coordinator_data.get("detector_imgsz", 1280)),
+            detector_confidence=float(coordinator_data.get("detector_confidence", 0.25)),
+            quadcopter_mission=str(coordinator_data.get("quadcopter_mission", "missions/quadcopter_search.waypoints")),
+            fixed_wing_mission=str(coordinator_data.get("fixed_wing_mission", "missions/fixed_wing_search.waypoints")),
+            telemetry_skew_s=float(coordinator_data.get("telemetry_skew_s", 0.25)),
+            telemetry_stale_s=float(coordinator_data.get("telemetry_stale_s", 2.0)),
+            tick_hz=float(coordinator_data.get("tick_hz", 10.0)),
+            command_interval_s=float(coordinator_data.get("command_interval_s", 1.0)),
+            tower_dwell_s=float(coordinator_data.get("tower_dwell_s", 1.0)),
+            tower_horizontal_overlap=float(coordinator_data.get("tower_horizontal_overlap", 0.20)),
+            dashboard_bind=str(coordinator_data.get("dashboard_bind", "127.0.0.1")),
+            dashboard_port=int(coordinator_data.get("dashboard_port", 8070)),
+        ),
+        tower_poses=tuple(
+            TowerWorldPose(
+                str(item["name"]),
+                float(item["latitude"]),
+                float(item["longitude"]),
+                float(item["camera_world_z_m"]),
+            )
+            for item in tower_poses_data
+        ),
     )
     _validate(config)
     return config
@@ -197,6 +244,19 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("track submission opt-in requires endpoint")
     if not config.track_api.name.strip():
         raise ConfigError("track API name must not be empty")
+    runtime = config.coordinator
+    if runtime.detector_imgsz <= 0 or not 0 < runtime.detector_confidence <= 1:
+        raise ConfigError("coordinator detector settings are invalid")
+    if runtime.telemetry_skew_s < 0 or runtime.telemetry_stale_s <= 0:
+        raise ConfigError("coordinator telemetry timing is invalid")
+    if runtime.tick_hz <= 0 or runtime.command_interval_s <= 0 or runtime.tower_dwell_s <= 0:
+        raise ConfigError("coordinator timing values must be positive")
+    if not 0.20 <= runtime.tower_horizontal_overlap < 1:
+        raise ConfigError("tower horizontal overlap must be in [0.20, 1)")
+    if not 1 <= runtime.dashboard_port <= 65535:
+        raise ConfigError("coordinator dashboard port must be between 1 and 65535")
+    if config.tower_poses and {pose.name for pose in config.tower_poses} != {"tower-1", "tower-2"}:
+        raise ConfigError("tower_poses must contain exactly tower-1 and tower-2")
 
 
 def load_config(path: str | Path, environ: Mapping[str, str] | None = None) -> AppConfig:

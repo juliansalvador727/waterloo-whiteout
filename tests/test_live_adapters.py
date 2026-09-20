@@ -13,21 +13,25 @@ class SimulatorActuatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.copter = Mock()
         self.tower = Mock()
-        self.telemetry = Telemetry("quadcopter", 72.0, -95.0, 100.0)
+        self.telemetry = Telemetry(
+            "quadcopter", 72.0, -95.0, 100.0,
+            relative_altitude_m=90.0, mission_sequence=7,
+        )
         self.actuator = SimulatorActuator(
             self.copter,
             {"tower-1": self.tower},
             lambda name: self.telemetry if name == "quadcopter" else None,
         )
 
-    def test_copter_target_becomes_guided_local_position(self) -> None:
+    def test_copter_target_uses_global_position_and_preserves_altitude(self) -> None:
         target = GeoEstimate(72.001, -94.999, 2.0)
         self.actuator(ControlIntent("quadcopter", "divert", target))
         self.copter.set_mode.assert_called_once_with(CopterMode.GUIDED)
-        north, east, down = self.copter.set_position.call_args.args
-        self.assertAlmostEqual(north, 111.319, places=2)
-        self.assertAlmostEqual(east, 34.398, places=2)
-        self.assertEqual(down, 0.0)
+        self.copter.goto_global.assert_called_once_with(72.001, -94.999, 90.0)
+
+        self.actuator(ControlIntent("quadcopter", "resume_search"))
+        self.copter.set_mission_current.assert_called_once_with(7)
+        self.copter.resume_search.assert_called_once_with()
 
     def test_resume_and_tower_cue_use_typed_controllers(self) -> None:
         self.actuator(ControlIntent("quadcopter", "resume_search"))

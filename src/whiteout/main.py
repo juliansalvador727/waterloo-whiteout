@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from dataclasses import asdict
 
@@ -56,7 +57,12 @@ def observe_camera(config: AppConfig, name: str, max_frames: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "coordinator":
+        from .coordinator_cli import main as coordinator_main
+
+        return coordinator_main(arguments[1:])
+    args = build_parser().parse_args(arguments)
     config = load_config(args.config)
     if args.submit_tracks and not config.track_api.allow_submission:
         raise SystemExit("refusing submission: track_api.allow_submission is false")

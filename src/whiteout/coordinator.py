@@ -275,7 +275,8 @@ class Coordinator:
             )
             pan_deg = calibration.target_pan(bearing_deg)
             tilt_deg = math.degrees(
-                math.atan2(-tower.camera_world_z_m, horizontal_range_m)
+                # ArcticSim's tower joint convention is positive downward.
+                math.atan2(tower.camera_world_z_m, horizontal_range_m)
             )
             if not (
                 calibration.pan_min_deg <= pan_deg <= calibration.pan_max_deg

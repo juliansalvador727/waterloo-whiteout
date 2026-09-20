@@ -6,7 +6,7 @@ from enum import Enum
 from os import PathLike
 import re
 import time
-from typing import Generic, Self, TypeVar
+from typing import Generic, Self, Sequence, TypeVar
 
 from .mavproxy import MavProxySession
 from .mission import SearchMission
@@ -56,12 +56,15 @@ class ObjectController(Generic[ObjectT]):
         *,
         executable: str = "mavproxy.py",
         connection_timeout_s: float = 15.0,
+        mavproxy_extra_arguments: Sequence[str] = (),
     ) -> None:
         if connection_timeout_s <= 0:
             raise ValueError("connection timeout must be positive")
         self.vehicle = vehicle
         self.connection_timeout_s = float(connection_timeout_s)
-        self.session: MavProxySession = vehicle.mavproxy_session(executable=executable)
+        self.session: MavProxySession = vehicle.mavproxy_session(
+            executable=executable, extra_arguments=mavproxy_extra_arguments
+        )
         self._search_mission: SearchMission | None = None
 
     @property
@@ -259,6 +262,14 @@ class CopterController(ObjectController[Copter]):
 
     def set_position(self, north_m: float, east_m: float, down_m: float) -> None:
         self._send(self.vehicle.position(north_m, east_m, down_m))
+
+    def goto_global(self, latitude: float, longitude: float, relative_altitude_m: float) -> None:
+        self._send(self.vehicle.guided(latitude, longitude, relative_altitude_m))
+
+    def set_mission_current(self, sequence: int) -> None:
+        if sequence < 0:
+            raise ValueError("mission sequence cannot be negative")
+        self._send(MavProxyCommand("wp", ("set", str(sequence))))
 
 
 class PlaneController(ObjectController[Plane]):

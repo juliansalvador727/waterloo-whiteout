@@ -44,20 +44,20 @@ from whiteout.tracker import ConstantVelocityTracker
 
 class CameraGeometryTests(unittest.TestCase):
     def test_fixed_presets_and_derived_intrinsics(self) -> None:
-        self.assertEqual((QUAD_CAMERA.width_px, QUAD_CAMERA.height_px), (640, 480))
+        self.assertEqual((QUAD_CAMERA.width_px, QUAD_CAMERA.height_px), (960, 720))
         self.assertEqual((FIXED_WING_CAMERA.horizontal_fov_deg, FIXED_WING_CAMERA.vertical_fov_deg), (69, 42.6))
         self.assertIs(camera_model("tower-2"), TOWER_CAMERA)
         self.assertEqual(
             (QUAD_CAMERA.intrinsics.cx_px, QUAD_CAMERA.intrinsics.cy_px),
-            (319.5, 239.5),
+            (479.5, 359.5),
         )
         self.assertEqual(
             (FIXED_WING_CAMERA.intrinsics.cx_px, FIXED_WING_CAMERA.intrinsics.cy_px),
-            (319.5, 179.5),
+            (639.5, 359.5),
         )
         self.assertAlmostEqual(
             QUAD_CAMERA.intrinsics.fx_px,
-            639 / (2 * math.tan(math.radians(114.6) / 2)),
+            959 / (2 * math.tan(math.radians(114.6) / 2)),
         )
 
     def test_boundary_pixel_rays_match_half_fields_of_view(self) -> None:
@@ -305,9 +305,9 @@ class IntegratedCoordinatorTests(unittest.TestCase):
         tower_1 = next(intent for intent in first.intents if intent.asset == "tower-1")
         tower_2 = next(intent for intent in first.intents if intent.asset == "tower-2")
         self.assertAlmostEqual(tower_1.pan_deg, 129.2444665)
-        self.assertAlmostEqual(tower_1.tilt_deg, -0.0582903)
+        self.assertAlmostEqual(tower_1.tilt_deg, 0.0582903)
         self.assertAlmostEqual(tower_2.pan_deg, 99.6731519)
-        self.assertAlmostEqual(tower_2.tilt_deg, -0.0815033)
+        self.assertAlmostEqual(tower_2.tilt_deg, 0.0815033)
         second = coordinator.coordinate(
             1, GeoEstimate(72.00001, -95, 2, start + timedelta(seconds=1)), source="quadcopter"
         )

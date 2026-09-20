@@ -90,8 +90,22 @@ The built-in observation command uses `NoOpDetector`, so zero detections are exp
 water-plane geolocation, tracking, inert control intents, and a gated track sink. Recording
 executors exercise that full loop without network or vehicle effects; live adapters translate
 approved intents into typed copter/tower calls and approved estimates into API submissions.
-There is not yet a single live CLI that owns all camera, telemetry, mission-controller, and
-dashboard connections. The current Fort Ross camera transforms include the simulator's 20-degree
+
+Run the complete interactive search from one terminal:
+
+```powershell
+whiteout coordinator --config config.yaml --confirm-network --confirm-flight
+```
+
+Add `--submit-tracks` only after setting `track_api.allow_submission: true` and a valid
+`track_api.endpoint`. The command connects both aircraft and both towers, starts the shared
+dashboard at `http://127.0.0.1:8070`, uploads both bundled missions, and prompts before each
+takeoff and AUTO transition. `quit` or Ctrl+C stops new submissions and requests RTL for both
+aircraft. The fixed-wing RTL command does not imply that it has landed.
+
+MJPEG frame timestamps are assigned when WHITEOUT receives each complete JPEG. They are used
+for the 250 ms telemetry match, but they are not guaranteed simulator exposure timestamps.
+The current Fort Ross camera transforms include the simulator's 20-degree
 quadcopter downtilt, 8-degree fixed-wing downtilt, and tower pan/tilt convention. `ReadOnlyMavlink`
 reads absolute position plus synchronized `ATTITUDE`
 samples without blocking. Missing, stale, or unsynchronized attitude remains explicitly absent

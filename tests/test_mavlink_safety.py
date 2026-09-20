@@ -103,10 +103,11 @@ class MavlinkSafetyTests(unittest.TestCase):
         self.assertEqual(
             connection.calls,
             [
-                {"type": ["ATTITUDE", "GLOBAL_POSITION_INT"], "blocking": False},
-                {"type": ["ATTITUDE", "GLOBAL_POSITION_INT"], "blocking": False},
+                {"type": ["ATTITUDE", "GLOBAL_POSITION_INT", "MISSION_CURRENT", "SERVO_OUTPUT_RAW", "HEARTBEAT"], "blocking": False},
+                {"type": ["ATTITUDE", "GLOBAL_POSITION_INT", "MISSION_CURRENT", "SERVO_OUTPUT_RAW", "HEARTBEAT"], "blocking": False},
             ],
         )
+        self.assertEqual(telemetry.relative_altitude_m, 60.0)
 
     def test_missing_or_unsynchronized_attitude_is_not_reported_as_zero(self) -> None:
         position = types.SimpleNamespace(

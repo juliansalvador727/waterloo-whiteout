@@ -24,10 +24,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(
             [(camera.width, camera.height, camera.hfov_deg, camera.vfov_deg) for camera in config.cameras],
             [
-                (640, 480, 114.6, 99.4),
-                (640, 360, 69.0, 42.6),
-                (640, 360, 60.0, 36.1),
-                (640, 360, 60.0, 36.1),
+                (960, 720, 114.6, 99.4),
+                (1280, 720, 69.0, 42.6),
+                (1280, 720, 60.0, 36.1),
+                (1280, 720, 60.0, 36.1),
             ],
         )
         self.assertEqual(

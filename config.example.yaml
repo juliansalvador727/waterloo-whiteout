@@ -1,33 +1,50 @@
 sim_host: ${SIM_HOST:-10.99.0.1}
 placement_owner: unassigned
 
+course_bounds:
+  south: 71.9840
+  west: -94.9210
+  north: 72.0010
+  east: -94.7450
+
+# Used only when ArcticSim's /api/assets metadata endpoint is unavailable.
+tower_poses:
+  - name: tower-1
+    latitude: 71.99912183839884
+    longitude: -94.81086504031542
+    camera_world_z_m: 6.62
+  - name: tower-2
+    latitude: 71.97880305156609
+    longitude: -94.88346035301377
+    camera_world_z_m: 6.62
+
 cameras:
   - name: quadcopter
     port: 8600
     path: /stream
-    width: 640
-    height: 480
+    width: 960
+    height: 720
     hfov_deg: 114.6
     vfov_deg: 99.4
   - name: fixed-wing
     port: 8610
     path: /stream
-    width: 640
-    height: 360
+    width: 1280
+    height: 720
     hfov_deg: 69.0
     vfov_deg: 42.6
   - name: tower-1
     port: 8630
     path: /stream
-    width: 640
-    height: 360
+    width: 1280
+    height: 720
     hfov_deg: 60.0
     vfov_deg: 36.1
   - name: tower-2
     port: 8640
     path: /stream
-    width: 640
-    height: 360
+    width: 1280
+    height: 720
     hfov_deg: 60.0
     vfov_deg: 36.1
 
@@ -50,3 +67,18 @@ track_api:
 
 logging:
   jsonl_path: null
+
+coordinator:
+  detector_weights: best.pt
+  detector_imgsz: 1280
+  detector_confidence: 0.25
+  quadcopter_mission: missions/quadcopter_search.waypoints
+  fixed_wing_mission: missions/fixed_wing_search.waypoints
+  telemetry_skew_s: 0.25
+  telemetry_stale_s: 2.0
+  tick_hz: 10
+  command_interval_s: 1
+  tower_dwell_s: 1
+  tower_horizontal_overlap: 0.20
+  dashboard_bind: 127.0.0.1
+  dashboard_port: 8070

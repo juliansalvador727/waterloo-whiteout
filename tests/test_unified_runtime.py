@@ -1,0 +1,142 @@
+from __future__ import annotations
+
+import unittest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
+
+from whiteout.camera import CameraFrame
+from whiteout.config import AppConfig, CourseBounds, TrackApiConfig
+from whiteout.coordinator_cli import validate_live_config
+from whiteout.models import ControlIntent, Detection, GeoEstimate, Pixel, SearchMode, Telemetry
+from whiteout.objects import Copter
+from whiteout.runtime import (
+    RateLimitedExecutor,
+    TelemetryBuffer,
+    UnifiedCoordinatorRuntime,
+    _course_scan_pans,
+    _resolve_tower_poses,
+)
+from whiteout.tower import FORT_ROSS_TOWERS
+
+
+class UnifiedRuntimeTests(unittest.TestCase):
+    def test_telemetry_buffer_matches_nearest_frame_and_rejects_skew(self) -> None:
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        buffer = TelemetryBuffer()
+        older = Telemetry("quadcopter", 72, -95, 100, timestamp=start)
+        newer = Telemetry(
+            "quadcopter", 72, -95, 100,
+            timestamp=start + timedelta(milliseconds=200),
+        )
+        buffer.append(older)
+        buffer.append(newer)
+        self.assertIs(buffer.nearest(start + timedelta(milliseconds=180), 0.25), newer)
+        self.assertIsNone(buffer.nearest(start + timedelta(seconds=1), 0.25))
+
+    def test_executor_coalesces_commands_and_honours_operator_override(self) -> None:
+        delegate = Mock()
+        telemetry = Telemetry(
+            "quadcopter", 72, -95, 100,
+            timestamp=datetime.now(timezone.utc), relative_altitude_m=90,
+        )
+        times = iter((1.0, 1.2))
+        executor = RateLimitedExecutor(
+            delegate, lambda _asset: telemetry,
+            interval_s=1.0, stale_s=2.0, clock=lambda: next(times),
+        )
+        executor.enabled_assets.add("quadcopter")
+        intent = ControlIntent("quadcopter", "divert", GeoEstimate(72, -95, 2))
+        executor.execute(intent)
+        executor.execute(intent)
+        executor.operator_overrides.add("quadcopter")
+        executor.execute(intent)
+        delegate.execute.assert_called_once_with(intent)
+
+    def test_global_guided_command_contains_target_and_preserved_altitude(self) -> None:
+        self.assertEqual(
+            Copter().guided(71.99, -94.84, 90.0).render(),
+            "guided 71.99 -94.84 90",
+        )
+
+    def test_submission_and_course_preflight(self) -> None:
+        bounds = CourseBounds(71.98, -94.93, 72.01, -94.74)
+        validate_live_config(AppConfig(course_bounds=bounds), submit_tracks=False)
+        with self.assertRaisesRegex(ValueError, "course_bounds"):
+            validate_live_config(AppConfig(), submit_tracks=False)
+        with self.assertRaisesRegex(ValueError, "allow_submission"):
+            validate_live_config(AppConfig(course_bounds=bounds), submit_tracks=True)
+        with self.assertRaisesRegex(ValueError, "absolute HTTP"):
+            validate_live_config(
+                AppConfig(
+                    course_bounds=bounds,
+                    track_api=TrackApiConfig(True, "relative/path"),
+                ),
+                submit_tracks=True,
+            )
+
+    def test_tower_scan_is_reachable_course_facing_and_overlapping(self) -> None:
+        bounds = CourseBounds(71.984, -94.921, 72.001, -94.745)
+        for tower in FORT_ROSS_TOWERS:
+            pans = _course_scan_pans(tower, bounds, 0.20)
+            self.assertTrue(pans)
+            self.assertTrue(all(-144 <= pan <= 144 for pan in pans))
+            self.assertTrue(all(right - left <= 48.000001 for left, right in zip(pans, pans[1:])))
+
+    def test_empty_or_partial_metadata_uses_explicit_tower_poses(self) -> None:
+        self.assertIs(_resolve_tower_poses((), FORT_ROSS_TOWERS), FORT_ROSS_TOWERS)
+        partial = (FORT_ROSS_TOWERS[0],)
+        self.assertIs(_resolve_tower_poses(partial, FORT_ROSS_TOWERS), FORT_ROSS_TOWERS)
+        self.assertIs(_resolve_tower_poses(FORT_ROSS_TOWERS, ()), FORT_ROSS_TOWERS)
+        with self.assertRaisesRegex(RuntimeError, "no complete tower_poses"):
+            _resolve_tower_poses(partial, ())
+
+    def test_fake_runtime_detection_diversion_confirmation_and_reset(self) -> None:
+        class Detector:
+            def detect(self, _frame: CameraFrame):
+                return []
+
+        controllers = {name: Mock() for name in ("quadcopter", "fixed-wing", "tower-1", "tower-2")}
+        config = AppConfig(course_bounds=CourseBounds(70, -100, 75, -90))
+        runtime = UnifiedCoordinatorRuntime(
+            config,
+            detector=Detector(),
+            controllers=controllers,
+            telemetry_readers={},
+            tower_poses=FORT_ROSS_TOWERS,
+            submit_tracks=False,
+            operator="tester",
+        )
+        with self.assertRaises(PermissionError):
+            runtime.launch_quadcopter(90)
+        runtime.activate_operator_session()
+        runtime.executor.enabled_assets.add("quadcopter")
+        timestamp = datetime.now(timezone.utc)
+        for offset in (0.0, 0.1):
+            observed = timestamp + timedelta(seconds=offset)
+            telemetry = Telemetry(
+                "quadcopter", 72, -95, 100,
+                roll_rad=0, pitch_rad=0, yaw_rad=0,
+                timestamp=observed, attitude_timestamp=observed,
+                relative_altitude_m=90, mission_sequence=4,
+            )
+            runtime.telemetry["quadcopter"].append(telemetry)
+            frame = CameraFrame("quadcopter", b"jpeg", observed)
+            detection = Detection(
+                "quadcopter", Pixel(480, 360), 0.9, observed,
+                metadata={"waterline": (480, 360)},
+            )
+            runtime._detected_queue.put((frame, (detection,)))
+            runtime._drain_detected()
+
+        self.assertEqual(runtime.pipeline.coordinator.mode, SearchMode.TRACK)
+        controllers["quadcopter"].goto_global.assert_called()
+        baseline = runtime.pipeline.coordinator._last_seen_s
+        assert baseline is not None
+        runtime.pipeline.tick(baseline + 15.0)
+        controllers["quadcopter"].set_mission_current.assert_called_with(4)
+        controllers["quadcopter"].resume_search.assert_called()
+        runtime.close(request_rtl=False)
+
+
+if __name__ == "__main__":
+    unittest.main()

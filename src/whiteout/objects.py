@@ -258,7 +258,8 @@ class Copter(RepositoryObject):
     )
 
     def controller(
-        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0
+        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0,
+        mavproxy_extra_arguments: Sequence[str] = (),
     ) -> CopterController:
         """Create a typed Python controller backed by MAVProxy."""
         from .control import CopterController
@@ -267,6 +268,7 @@ class Copter(RepositoryObject):
             self,
             executable=executable,
             connection_timeout_s=connection_timeout_s,
+            mavproxy_extra_arguments=mavproxy_extra_arguments,
         )
 
     def takeoff(self, altitude_m: float) -> MavProxyCommand:
@@ -307,6 +309,18 @@ class Copter(RepositoryObject):
         )
         return MavProxyCommand("position", values)
 
+    def guided(self, latitude: float, longitude: float, altitude_m: float) -> MavProxyCommand:
+        """Build an explicit global GUIDED destination at relative altitude."""
+        latitude = _finite_number(latitude, "guided latitude")
+        longitude = _finite_number(longitude, "guided longitude")
+        altitude_m = _finite_number(altitude_m, "guided altitude")
+        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180 or altitude_m <= 0:
+            raise ValueError("guided destination latitude, longitude, or altitude is invalid")
+        return MavProxyCommand(
+            "guided",
+            tuple(format(value, ".10g") for value in (latitude, longitude, altitude_m)),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Plane(RepositoryObject):
@@ -320,7 +334,8 @@ class Plane(RepositoryObject):
     )
 
     def controller(
-        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0
+        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0,
+        mavproxy_extra_arguments: Sequence[str] = (),
     ) -> PlaneController:
         """Create a typed Python controller backed by MAVProxy."""
         from .control import PlaneController
@@ -329,6 +344,7 @@ class Plane(RepositoryObject):
             self,
             executable=executable,
             connection_timeout_s=connection_timeout_s,
+            mavproxy_extra_arguments=mavproxy_extra_arguments,
         )
 
     def set_speed(self, speed_mps: float) -> MavProxyCommand:
@@ -384,7 +400,8 @@ class Tower(RepositoryObject):
         return self.servo(2, angle_deg)
 
     def controller(
-        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0
+        self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0,
+        mavproxy_extra_arguments: Sequence[str] = (),
     ) -> TowerController:
         """Create a typed Python controller backed by MAVProxy."""
         from .control import TowerController
@@ -393,6 +410,7 @@ class Tower(RepositoryObject):
             self,
             executable=executable,
             connection_timeout_s=connection_timeout_s,
+            mavproxy_extra_arguments=mavproxy_extra_arguments,
         )
 
     def automatic_mission(self, path: str) -> tuple[MavProxyCommand, ...]:

@@ -10,7 +10,7 @@ from .mavproxy import MavProxyNotRunning, MavProxySession, MavProxyUnavailable
 from .mission import MissionValidationError, MissionWaypoint, SearchMission
 from .observation import ObservationMetadata, SynchronizationStatus
 from .camera import CameraModel, FIXED_WING_CAMERA, QUAD_CAMERA, TOWER_CAMERA
-from .config import CourseBounds
+from .config import CoordinatorConfig, CourseBounds
 from .execution import (
     Executor,
     LiveExecutor,
@@ -30,6 +30,7 @@ from .pose import (
     tower_camera_pose,
 )
 from .simulator_metadata import ArcticSimMetadataClient, GeneratedAssetPose
+from .runtime import UnifiedCoordinatorRuntime
 from .tower import (
     FORT_ROSS_TOWERS,
     MAX_TOWER_SCAN_HORIZONTAL_STEP_DEG,
@@ -83,6 +84,7 @@ __all__ = [
     "CopterMode",
     "CameraModel",
     "ControlIntent",
+    "CoordinatorConfig",
     "CourseBounds",
     "Executor",
     "FIXED_WING_CAMERA",
@@ -132,6 +134,7 @@ __all__ = [
     "TrackEstimate",
     "TrackApiSubmitter",
     "TrackSink",
+    "UnifiedCoordinatorRuntime",
     "VehicleStateError",
     "UnsupportedCommand",
     "arctic_sim_fleet",

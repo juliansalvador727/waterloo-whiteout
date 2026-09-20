@@ -65,6 +65,7 @@ class OperationalPipeline:
         waypoint_sequence: int | None = None,
         tower_pan_pwm: int | None = None,
         tower_tilt_pwm: int | None = None,
+        detections: tuple[Detection, ...] | None = None,
     ) -> PipelineCycle:
         """Process one frame, selecting at most one candidate from that frame.
 
@@ -87,9 +88,11 @@ class OperationalPipeline:
         if self.on_frame is not None:
             self.on_frame(frame)
 
-        detections = tuple(
-            sorted(self.detector.detect(frame), key=lambda item: item.confidence, reverse=True)
-        )
+        detections = tuple(sorted(
+            self.detector.detect(frame) if detections is None else detections,
+            key=lambda item: item.confidence,
+            reverse=True,
+        ))
         for detection in detections:
             if self.on_detection is not None:
                 self.on_detection(detection)
