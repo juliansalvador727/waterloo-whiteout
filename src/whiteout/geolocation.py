@@ -28,6 +28,11 @@ class CameraPose:
     yaw_rad: float = 0.0
     position_uncertainty_m: float = 1.0
     attitude_uncertainty_rad: float = math.radians(1.0)
+    camera_to_ned: tuple[
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ] | None = None
 
 
 def _rotate_ned(vector: tuple[float, float, float], roll: float, pitch: float, yaw: float) -> tuple[float, float, float]:
@@ -62,7 +67,19 @@ def estimate_flat_water(
     optical_x = (pixel.x - intrinsics.cx_px) / intrinsics.fx_px
     optical_y = (pixel.y - intrinsics.cy_px) / intrinsics.fy_px
     # At zero attitude the optical axis points down: image up is north, right is east.
-    ray_ned = _rotate_ned((-optical_y, optical_x, 1.0), pose.roll_rad, pose.pitch_rad, pose.yaw_rad)
+    ray_camera = (-optical_y, optical_x, 1.0)
+    if pose.camera_to_ned is None:
+        ray_ned = _rotate_ned(
+            ray_camera,
+            pose.roll_rad,
+            pose.pitch_rad,
+            pose.yaw_rad,
+        )
+    else:
+        ray_ned = tuple(
+            sum(row[column] * ray_camera[column] for column in range(3))
+            for row in pose.camera_to_ned
+        )
     if ray_ned[2] <= 1e-6:
         raise ValueError("pixel ray does not intersect the water in front of the camera")
 

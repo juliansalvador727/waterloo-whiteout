@@ -32,7 +32,7 @@ from whiteout.models import (
     TrackEstimate,
 )
 from whiteout.observation import ObservationMetadata, SynchronizationStatus
-from whiteout.tower import TowerCalibration, TowerOrientation
+from whiteout.tower import TowerCalibration, TowerOrientation, TowerWorldPose
 from whiteout.tower import (
     MAX_TOWER_SCAN_HORIZONTAL_STEP_DEG,
     MAX_TOWER_SCAN_VERTICAL_STEP_DEG,
@@ -304,10 +304,10 @@ class IntegratedCoordinatorTests(unittest.TestCase):
         )
         tower_1 = next(intent for intent in first.intents if intent.asset == "tower-1")
         tower_2 = next(intent for intent in first.intents if intent.asset == "tower-2")
-        self.assertAlmostEqual(tower_1.pan_deg, 130.6944323)
-        self.assertAlmostEqual(tower_1.tilt_deg, -0.3982518)
-        self.assertAlmostEqual(tower_2.pan_deg, 141.1498372)
-        self.assertAlmostEqual(tower_2.tilt_deg, -1.9190312)
+        self.assertAlmostEqual(tower_1.pan_deg, 129.2444665)
+        self.assertAlmostEqual(tower_1.tilt_deg, -0.0582903)
+        self.assertAlmostEqual(tower_2.pan_deg, 99.6731519)
+        self.assertAlmostEqual(tower_2.tilt_deg, -0.0815033)
         second = coordinator.coordinate(
             1, GeoEstimate(72.00001, -95, 2, start + timedelta(seconds=1)), source="quadcopter"
         )
@@ -331,14 +331,29 @@ class IntegratedCoordinatorTests(unittest.TestCase):
         self.assertEqual(before_search_reset.recommendation.mode.value, "REACQUIRE")
         at_search_reset = coordinator.coordinate(16.0, None)
         self.assertEqual(at_search_reset.recommendation.mode.value, "SEARCH")
+        self.assertEqual(
+            [(intent.asset, intent.action) for intent in at_search_reset.intents],
+            [("quadcopter", "resume_search")],
+        )
 
     def test_unreachable_tower_is_omitted(self) -> None:
         result = Coordinator().coordinate(
             0,
-            GeoEstimate(72.000588, -94.814426, 2),
+            GeoEstimate(71.99912183839884, -94.81086504031542, 2),
         )
         self.assertNotIn("tower-1", {intent.asset for intent in result.intents})
         self.assertIn("quadcopter", {intent.asset for intent in result.intents})
+
+    def test_generated_tower_poses_override_fallback_calibration(self) -> None:
+        generated = (TowerWorldPose("tower-live", 72.0, -95.0, 10.0),)
+        result = Coordinator(tower_poses=generated).coordinate(
+            0,
+            GeoEstimate(72.001, -95.0, 2),
+        )
+        self.assertEqual(
+            {intent.asset for intent in result.intents},
+            {"tower-live", "quadcopter"},
+        )
 
     def test_course_and_tracker_compatibility_reject_observations(self) -> None:
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)

@@ -122,7 +122,10 @@ class ReadOnlyMavlink:
             vehicle=self.vehicle,
             latitude=float(message.lat) / 1e7,  # type: ignore[attr-defined]
             longitude=float(message.lon) / 1e7,  # type: ignore[attr-defined]
-            altitude_m=float(message.relative_alt) / 1000.0,  # type: ignore[attr-defined]
+            # GLOBAL_POSITION_INT.alt is altitude above mean sea level. The
+            # Fort Ross water plane is z=0, so launch-relative altitude must
+            # never be used for vessel geolocation.
+            altitude_m=float(message.alt) / 1000.0,  # type: ignore[attr-defined]
             roll_rad=values[0],
             pitch_rad=values[1],
             yaw_rad=values[2],

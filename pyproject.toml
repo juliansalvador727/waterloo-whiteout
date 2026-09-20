@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 camera = ["opencv-python-headless>=4.8"]
+detector = ["ultralytics>=8.0"]
 mavlink = ["pymavlink>=2.4"]
 mavproxy = ["MAVProxy>=1.8", "prompt-toolkit>=3"]
 yaml = ["PyYAML>=6"]

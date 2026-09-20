@@ -25,8 +25,11 @@ class TowerWorldPose:
 
 
 FORT_ROSS_TOWERS = (
-    TowerWorldPose("tower-1", 72.000588, -94.814426, 44.374),
-    TowerWorldPose("tower-2", 72.011778, -94.804721, 229.254),
+    # Active competition placement. ArcticSim places the model base at
+    # world-z 3.92 m and terrain/tower.py puts the optical centre 2.70 m above
+    # that base, so both camera rays originate at world-z 6.62 m.
+    TowerWorldPose("tower-1", 71.99912183839884, -94.81086504031542, 6.62),
+    TowerWorldPose("tower-2", 71.97880305156609, -94.88346035301377, 6.62),
 )
 
 

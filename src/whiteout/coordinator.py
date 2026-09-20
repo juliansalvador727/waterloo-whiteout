@@ -19,7 +19,7 @@ from .models import (
     TrackEstimate,
 )
 from .observation import ObservationMetadata, SynchronizationStatus
-from .tower import FORT_ROSS_TOWERS, TowerCalibration
+from .tower import FORT_ROSS_TOWERS, TowerCalibration, TowerWorldPose
 from .tracker import ConstantVelocityTracker
 
 if TYPE_CHECKING:
@@ -52,6 +52,9 @@ class Coordinator:
     course_contains: Callable[[float, float], bool] | None = None
     course_bounds: Bounds | None = None
     tracker: ConstantVelocityTracker = field(default_factory=ConstantVelocityTracker)
+    tower_poses: tuple[TowerWorldPose, ...] = field(
+        default_factory=lambda: FORT_ROSS_TOWERS
+    )
     _confirmations: int = 0
     _last_seen_s: float | None = None
     _track_started_s: float | None = None
@@ -163,7 +166,21 @@ class Coordinator:
             )
         waterline = detection.metadata.get("waterline")
         pixel = Pixel(float(waterline[0]), float(waterline[1])) if isinstance(waterline, (tuple, list)) and len(waterline) == 2 else detection.pixel
-        estimate = estimate_flat_water(pixel, intrinsics, pose, observation_timestamp=detection.timestamp)
+        try:
+            estimate = estimate_flat_water(
+                pixel,
+                intrinsics,
+                pose,
+                observation_timestamp=detection.timestamp,
+            )
+        except ValueError as exc:
+            return CoordinationResult(
+                ActionRecommendation(
+                    self.mode,
+                    "ignore_observation",
+                    f"geolocation rejected observation: {exc}",
+                )
+            )
         return self.coordinate(
             now_s,
             estimate,
@@ -183,7 +200,11 @@ class Coordinator:
             self._last_seen_s = None
             self._track_started_s = None
             self.tracker = ConstantVelocityTracker(track_id=self.tracker.track_id)
-            return CoordinationResult(ActionRecommendation(self.mode, "resume_search_pattern", "target stale"))
+            reason = "target stale"
+            return CoordinationResult(
+                ActionRecommendation(self.mode, "resume_search_pattern", reason),
+                intents=(ControlIntent("quadcopter", "resume_search", reason=reason),),
+            )
 
         predicted = self.tracker.predict(age)
         track_estimate = None
@@ -239,13 +260,13 @@ class Coordinator:
         intents.append(ControlIntent("quadcopter", quad_action, target, reason))
         return tuple(intents)
 
-    @staticmethod
     def _tower_intents(
+        self,
         action: str, target: GeoEstimate, reason: str
     ) -> tuple[ControlIntent, ...]:
         calibration = TowerCalibration()
         intents: list[ControlIntent] = []
-        for tower in FORT_ROSS_TOWERS:
+        for tower in self.tower_poses:
             bearing_deg, horizontal_range_m = _bearing_and_range(
                 tower.latitude,
                 tower.longitude,

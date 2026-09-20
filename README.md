@@ -80,11 +80,24 @@ The built-in observation command uses `NoOpDetector`, so zero detections are exp
 - validated QGC WPL search mission upload for both aircraft, separate explicit start, pause/resume, RTL/abort, and safe clearing
 - a separate runway-specific fixed-wing landing mission
 - local flat-water pixel geolocation with uncertainty
-- an alpha-beta constant-velocity tracker
+- a gated constant-velocity Kalman tracker
+- an effect-injected operational pipeline that joins detection, synchronized geolocation,
+  tracking, control intents, 1 Hz submission cadence, reacquisition, and search reset
 - SEARCH, CONFIRM, TRACK, REACQUIRE, RETURN, and ABORT recommendations with offline manual or synthetic detection injection
 - append-only JSONL logging and a safety-gated Dominion track client
 
-The observation pipeline is still a scaffold. It has no production detector and does not connect telemetry, geolocation, tracking, control, or submission end to end. `ReadOnlyMavlink` reads position plus synchronized `ATTITUDE` samples without blocking. Missing, stale, or unsynchronized attitude remains explicitly absent rather than appearing as live zero values. Do not trust aircraft geolocation until calibrated camera extrinsics are wired and each frame's observation metadata reports synchronized pose and attitude.
+`OperationalPipeline` now connects a supplied detector, synchronized observation metadata,
+water-plane geolocation, tracking, inert control intents, and a gated track sink. Recording
+executors exercise that full loop without network or vehicle effects; live adapters translate
+approved intents into typed copter/tower calls and approved estimates into API submissions.
+There is not yet a single live CLI that owns all camera, telemetry, mission-controller, and
+dashboard connections. The current Fort Ross camera transforms include the simulator's 20-degree
+quadcopter downtilt, 8-degree fixed-wing downtilt, and tower pan/tilt convention. `ReadOnlyMavlink`
+reads absolute position plus synchronized `ATTITUDE`
+samples without blocking. Missing, stale, or unsynchronized attitude remains explicitly absent
+rather than appearing as live zero values. Do not trust aircraft geolocation until calibrated
+camera geometry remains in step with ArcticSim and each frame's observation metadata reports
+synchronized pose and attitude.
 
 ## ArcticSim endpoints
 
@@ -194,8 +207,8 @@ ASSET_N=tower,<asset-name>,<latitude>,<longitude>
 The documented default tower entries are:
 
 ```dotenv
-ASSET_2=tower,tower-1,71.980671,-94.853711
-ASSET_5=tower,tower-2,72.011778,-94.804721
+ASSET_2=tower,tower-1,71.99912183839884,-94.81086504031542
+ASSET_5=tower,tower-2,71.97880305156609,-94.88346035301377
 ```
 
 ArcticSim derives tower elevation from terrain. Camera pan and tilt are set after startup through the typed tower controller, not in the placement entry. After an authorized `.env` edit, the ArcticSim host must follow ArcticSim's documented save, rebuild, and restart procedure. Those are simulator operations, not controller commands.
@@ -218,14 +231,13 @@ Check line of sight, target scale, overlapping water coverage, and camera orient
 
 Implement the `Detector` protocol from `src/whiteout/detector.py` with `detect(frame: CameraFrame) -> list[Detection]`. Each detection needs the source camera name, target pixel, confidence, and preferably the frame timestamp. Keep model loading in the implementation constructor so imports and offline tests do not require model weights or network access.
 
-The remaining integration sequence is:
+The remaining live-application wiring is:
 
-1. Select the detector instead of `NoOpDetector`.
-2. Associate each detection with synchronized platform or tower pose.
-3. Convert the target pixel to a `GeoEstimate` using calibrated intrinsics and pose.
-4. Update `ConstantVelocityTracker`.
-5. Pass the estimate to `Coordinator` and log the result.
-6. Submit the resulting `Track` only after both submission gates are enabled.
+1. Select `YoloVesselDetector` instead of `NoOpDetector`.
+2. Feed each camera frame and its synchronized, calibrated pose to `OperationalPipeline`.
+3. Wrap `SimulatorActuator` in a `LiveExecutor` only after the operator mission gate opens.
+4. Wrap `TrackApiSubmitter` in a `LiveTrackSink` only after session-level submission approval.
+5. Publish pipeline callbacks into `MissionStateStore` for the dashboard.
 
 Keep recommendation generation separate from command transmission. A caller must explicitly decide which reviewed recommendations, if any, to send through a controller.
 

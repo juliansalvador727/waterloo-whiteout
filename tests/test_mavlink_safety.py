@@ -85,7 +85,7 @@ class MavlinkSafetyTests(unittest.TestCase):
             get_type=lambda: "ATTITUDE",
         )
         position = types.SimpleNamespace(
-            lat=719958070, lon=-948393000, relative_alt=60_000, time_boot_ms=10_100,
+            lat=719958070, lon=-948393000, alt=75_000, relative_alt=60_000, time_boot_ms=10_100,
             get_type=lambda: "GLOBAL_POSITION_INT",
         )
         connection = _MessageConnection(attitude, position)
@@ -99,6 +99,7 @@ class MavlinkSafetyTests(unittest.TestCase):
             (telemetry.roll_rad, telemetry.pitch_rad, telemetry.yaw_rad),
             (0.1, -0.2, 1.3),
         )
+        self.assertEqual(telemetry.altitude_m, 75.0)
         self.assertEqual(
             connection.calls,
             [
@@ -109,7 +110,7 @@ class MavlinkSafetyTests(unittest.TestCase):
 
     def test_missing_or_unsynchronized_attitude_is_not_reported_as_zero(self) -> None:
         position = types.SimpleNamespace(
-            lat=719958070, lon=-948393000, relative_alt=60_000, time_boot_ms=10_000,
+            lat=719958070, lon=-948393000, alt=75_000, relative_alt=60_000, time_boot_ms=10_000,
             get_type=lambda: "GLOBAL_POSITION_INT",
         )
         connection = _MessageConnection(None, position)
@@ -128,7 +129,7 @@ class MavlinkSafetyTests(unittest.TestCase):
             get_type=lambda: "ATTITUDE",
         )
         position = types.SimpleNamespace(
-            lat=719958070, lon=-948393000, relative_alt=60_000, time_boot_ms=10_000,
+            lat=719958070, lon=-948393000, alt=75_000, relative_alt=60_000, time_boot_ms=10_000,
             get_type=lambda: "GLOBAL_POSITION_INT",
         )
         adapter._connection = _MessageConnection(attitude, position)
@@ -143,7 +144,7 @@ class MavlinkSafetyTests(unittest.TestCase):
             get_type=lambda: "ATTITUDE",
         )
         position = types.SimpleNamespace(
-            lat=719958070, lon=-948393000, relative_alt=60_000, time_boot_ms=10_000,
+            lat=719958070, lon=-948393000, alt=75_000, relative_alt=60_000, time_boot_ms=10_000,
             get_type=lambda: "GLOBAL_POSITION_INT",
         )
         adapter = ReadOnlyMavlink(
@@ -160,6 +161,7 @@ class MavlinkSafetyTests(unittest.TestCase):
         message = types.SimpleNamespace(
             lat=719900000,
             lon=-948200000,
+            alt=25000,
             relative_alt=12500,
             hdg=9000,
             time_boot_ms=10_000,
