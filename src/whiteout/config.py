@@ -58,6 +58,7 @@ class CoordinatorConfig:
     tick_hz: float = 10.0
     command_interval_s: float = 1.0
     tower_dwell_s: float = 1.0
+    tower_detection_hold_s: float = 1.5
     tower_horizontal_overlap: float = 0.20
     dashboard_bind: str = "127.0.0.1"
     dashboard_port: int = 8070
@@ -252,6 +253,7 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
             tick_hz=float(coordinator_data.get("tick_hz", 10.0)),
             command_interval_s=float(coordinator_data.get("command_interval_s", 1.0)),
             tower_dwell_s=float(coordinator_data.get("tower_dwell_s", 1.0)),
+            tower_detection_hold_s=float(coordinator_data.get("tower_detection_hold_s", 1.5)),
             tower_horizontal_overlap=float(coordinator_data.get("tower_horizontal_overlap", 0.20)),
             dashboard_bind=str(coordinator_data.get("dashboard_bind", "127.0.0.1")),
             dashboard_port=int(coordinator_data.get("dashboard_port", 8070)),
@@ -293,7 +295,12 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("coordinator detector settings are invalid")
     if runtime.telemetry_skew_s < 0 or runtime.telemetry_stale_s <= 0:
         raise ConfigError("coordinator telemetry timing is invalid")
-    if runtime.tick_hz <= 0 or runtime.command_interval_s <= 0 or runtime.tower_dwell_s <= 0:
+    if (
+        runtime.tick_hz <= 0
+        or runtime.command_interval_s <= 0
+        or runtime.tower_dwell_s <= 0
+        or runtime.tower_detection_hold_s <= 0
+    ):
         raise ConfigError("coordinator timing values must be positive")
     if not 0.20 <= runtime.tower_horizontal_overlap < 1:
         raise ConfigError("tower horizontal overlap must be in [0.20, 1)")

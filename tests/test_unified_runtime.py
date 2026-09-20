@@ -122,6 +122,76 @@ class UnifiedRuntimeTests(unittest.TestCase):
         self.assertEqual(pans[0], -100)
         self.assertEqual(pans[-1], 80)
 
+    def test_tower_detection_cancels_scan_target_while_awaiting_settled_pose(self) -> None:
+        class Detector:
+            def detect(self, frame: CameraFrame):
+                return (
+                    Detection("tower-1", Pixel(640, 360), 0.9, frame.timestamp),
+                )
+
+        controllers = {name: Mock() for name in ("quadcopter", "fixed-wing", "tower-1", "tower-2")}
+        runtime = UnifiedCoordinatorRuntime(
+            AppConfig(course_bounds=CourseBounds(70, -100, 75, -90)),
+            detector=Detector(),
+            controllers=controllers,
+            telemetry_readers={},
+            tower_poses=FORT_ROSS_TOWERS,
+            submit_tracks=False,
+            operator="tester",
+            output=Mock(),
+        )
+        tower = runtime.towers["tower-1"]
+        tower.initialize_center(now_s=0.0)
+        tower.pan(60)
+        tower.advance(0.1)
+        self.assertNotEqual(tower.commanded_pan_deg, tower.target_pan_deg)
+
+        frame = CameraFrame("tower-1", b"jpeg", datetime.now(timezone.utc))
+        runtime._detect(runtime._capture_frame_state(frame))
+
+        self.assertEqual(tower.target_pan_deg, tower.commanded_pan_deg)
+        self.assertGreater(runtime._tower_detection_hold_until["tower-1"], 0)
+        held_target = tower.target_pan_deg
+        runtime.executor.enabled_assets.add("tower-1")
+        runtime._scan_towers(runtime._tower_detection_hold_until["tower-1"] - 0.1)
+        self.assertEqual(tower.target_pan_deg, held_target)
+
+    def test_frame_state_is_frozen_before_inference(self) -> None:
+        class Detector:
+            def detect(self, _frame: CameraFrame):
+                return ()
+
+        controllers = {name: Mock() for name in ("quadcopter", "fixed-wing", "tower-1", "tower-2")}
+        runtime = UnifiedCoordinatorRuntime(
+            AppConfig(course_bounds=CourseBounds(70, -100, 75, -90)),
+            detector=Detector(),
+            controllers=controllers,
+            telemetry_readers={},
+            tower_poses=FORT_ROSS_TOWERS,
+            submit_tracks=False,
+            operator="tester",
+        )
+        observed = datetime.now(timezone.utc)
+        old = Telemetry(
+            "quadcopter", 72, -95, 100,
+            roll_rad=0, pitch_rad=0, yaw_rad=0,
+            timestamp=observed, attitude_timestamp=observed,
+        )
+        runtime.telemetry["quadcopter"].append(old)
+        state = runtime._capture_frame_state(CameraFrame("quadcopter", b"jpeg", observed))
+        newer_time = observed + timedelta(milliseconds=100)
+        runtime.telemetry["quadcopter"].append(Telemetry(
+            "quadcopter", 73, -96, 200,
+            roll_rad=0.1, pitch_rad=0.2, yaw_rad=0.3,
+            timestamp=newer_time, attitude_timestamp=newer_time,
+        ))
+
+        self.assertIs(state.telemetry, old)
+        self.assertIsNotNone(state.pose)
+        assert state.pose is not None
+        self.assertEqual(state.pose.latitude, 72)
+        self.assertEqual(state.pose.altitude_m, 100)
+
     def test_empty_or_partial_metadata_uses_explicit_tower_poses(self) -> None:
         self.assertIs(_resolve_tower_poses((), FORT_ROSS_TOWERS), FORT_ROSS_TOWERS)
         partial = (FORT_ROSS_TOWERS[0],)
@@ -165,7 +235,7 @@ class UnifiedRuntimeTests(unittest.TestCase):
                 "quadcopter", Pixel(480, 360), 0.9, observed,
                 metadata={"waterline": (480, 360)},
             )
-            runtime._detected_queue.put((frame, (detection,)))
+            runtime._detected_queue.put((runtime._capture_frame_state(frame), (detection,)))
             runtime._drain_detected()
 
         self.assertEqual(runtime.pipeline.coordinator.mode, SearchMode.TRACK)

@@ -9,7 +9,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -22,6 +22,7 @@ from .dashboard.recording import SessionRecorder
 from .dashboard.state import AssetActivity, MissionStateStore
 from .detector import Detector, YoloVesselDetector
 from .execution import LiveExecutor, LiveTrackSink, OperatorSession
+from .geolocation import CameraIntrinsics, CameraPose
 from .live import SimulatorActuator, TrackApiSubmitter
 from .mavlink import ReadOnlyMavlink
 from .models import ControlIntent, Detection, SearchMode, Telemetry, TrackEstimate
@@ -80,6 +81,18 @@ class TelemetryBuffer:
                 return None
             item = min(self._items, key=lambda value: abs((value.timestamp - timestamp).total_seconds()))
         return item if abs((item.timestamp - timestamp).total_seconds()) <= maximum_skew_s else None
+
+
+@dataclass(frozen=True, slots=True)
+class FrameState:
+    """Immutable observation state captured before asynchronous inference."""
+
+    frame: CameraFrame
+    telemetry: Telemetry | None
+    intrinsics: CameraIntrinsics
+    pose: CameraPose | None
+    tower_pan_pwm: int | None = None
+    tower_tilt_pwm: int | None = None
 
 
 @dataclass(slots=True)
@@ -170,6 +183,15 @@ class ManagedTower:
         with self._lock:
             return self._reached_at_s
 
+    def hold(self, now_s: float | None = None) -> None:
+        """Cancel an in-progress slew without issuing another servo command."""
+        now = time.monotonic() if now_s is None else now_s
+        with self._lock:
+            self.target_pan_deg = self.commanded_pan_deg
+            self.target_tilt_deg = self.commanded_tilt_deg
+            self._last_advance_s = now
+            self._reached_at_s = now
+
     def _at_target_unlocked(self) -> bool:
         return (
             math.isclose(self.commanded_pan_deg, self.target_pan_deg, abs_tol=1e-6)
@@ -206,7 +228,7 @@ class ManagedTower:
             compass_heading_deg=compass,
             calibration=self.calibration,
             angular_rate_dps=angular_rate,
-            settled_since=commanded_at + timedelta(seconds=0.5),
+            settled_since=commanded_at,
         )
 
 
@@ -350,8 +372,8 @@ class UnifiedCoordinatorRuntime:
         self._tower_motion_enabled = threading.Event()
         self._tower_motion_enabled.set()
         self._threads: list[threading.Thread] = []
-        self._detected_queue: queue.Queue[tuple[CameraFrame, tuple]] = queue.Queue(maxsize=len(ASSETS) * 2)
-        self._pending_frames: dict[str, CameraFrame] = {}
+        self._detected_queue: queue.Queue[tuple[FrameState, tuple]] = queue.Queue(maxsize=len(ASSETS) * 2)
+        self._pending_frames: dict[str, FrameState] = {}
         self._pending_condition = threading.Condition()
         self._camera_seen: set[str] = set()
         self._detector_seen: set[str] = set()
@@ -363,6 +385,8 @@ class UnifiedCoordinatorRuntime:
         self._dashboard_server: object | None = None
         self._scan_index = {"tower-1": -1, "tower-2": 0}
         self._scan_at = {"tower-1": 0.0, "tower-2": 0.0}
+        self._tower_detection_hold_until = {"tower-1": 0.0, "tower-2": 0.0}
+        self._published_mode = SearchMode.SEARCH
 
         tower_motion = {item.name: item for item in config.tower_motion}
         self.towers = {
@@ -687,7 +711,7 @@ class UnifiedCoordinatorRuntime:
                 # One pending frame per camera bounds latency and memory. A new
                 # frame replaces an older frame that inference has not begun.
                 self._pending_frames.pop(frame.camera, None)
-                self._pending_frames[frame.camera] = frame
+                self._pending_frames[frame.camera] = self._capture_frame_state(frame)
                 self._pending_condition.notify()
 
     def _inference_worker(self) -> None:
@@ -698,12 +722,13 @@ class UnifiedCoordinatorRuntime:
                 if self._stop.is_set():
                     return
                 camera = next(iter(self._pending_frames))
-                frame = self._pending_frames.pop(camera)
-            self._detect(frame)
+                state = self._pending_frames.pop(camera)
+            self._detect(state)
 
-    def _detect(self, frame: CameraFrame) -> None:
+    def _detect(self, state: FrameState) -> None:
         if self._stop.is_set():
             return
+        frame = state.frame
         try:
             detections = tuple(self.detector.detect(frame))
         except Exception as exc:
@@ -712,7 +737,43 @@ class UnifiedCoordinatorRuntime:
         if frame.camera not in self._detector_seen:
             self._detector_seen.add(frame.camera)
             self.output(f"Detector running: {frame.camera}")
-        self._replace_queue(self._detected_queue, (frame, detections))
+        if (
+            detections
+            and frame.camera in self.towers
+            and self.pipeline.coordinator.mode is SearchMode.SEARCH
+        ):
+            self._hold_for_tower_detection(frame.camera)
+        self._replace_queue(self._detected_queue, (state, detections))
+
+    def _capture_frame_state(self, frame: CameraFrame) -> FrameState:
+        telemetry = self.telemetry[frame.camera].nearest(
+            frame.timestamp, self.config.coordinator.telemetry_skew_s
+        )
+        return FrameState(
+            frame=frame,
+            telemetry=telemetry,
+            intrinsics=self.camera_models[frame.camera].intrinsics,
+            pose=self._pose(frame.camera, telemetry),
+            tower_pan_pwm=telemetry.servo_1_pwm if telemetry else None,
+            tower_tilt_pwm=telemetry.servo_2_pwm if telemetry else None,
+        )
+
+    def _hold_for_tower_detection(self, name: str) -> None:
+        now = time.monotonic()
+        first_hold = now >= self._tower_detection_hold_until[name]
+        self.towers[name].hold(now)
+        self._tower_detection_hold_until[name] = (
+            now + self.config.coordinator.tower_detection_hold_s
+        )
+        if first_hold:
+            self.output(f"Tower hold: {name} detection awaiting settled geolocation")
+        self.store.update_asset_activity(
+            name,
+            AssetActivity.CONFIRMING,
+            reason="detector hold awaiting settled geolocation",
+            pan_deg=self.towers[name].target_pan_deg,
+            tilt_deg=self.towers[name].target_tilt_deg,
+        )
 
     def _telemetry_worker(self, name: str, reader: ReadOnlyMavlink) -> None:
         while not self._stop.is_set():
@@ -753,21 +814,17 @@ class UnifiedCoordinatorRuntime:
     def _drain_detected(self) -> None:
         while True:
             try:
-                frame, detections = self._detected_queue.get_nowait()
+                state, detections = self._detected_queue.get_nowait()
             except queue.Empty:
                 return
-            telemetry = self.telemetry[frame.camera].nearest(
-                frame.timestamp, self.config.coordinator.telemetry_skew_s
-            )
-            pose = self._pose(frame.camera, telemetry)
             self.pipeline.process_frame(
-                frame,
-                telemetry=telemetry,
-                intrinsics=self.camera_models[frame.camera].intrinsics,
-                pose=pose,
+                state.frame,
+                telemetry=state.telemetry,
+                intrinsics=state.intrinsics,
+                pose=state.pose,
                 now_s=time.monotonic(),
-                tower_pan_pwm=telemetry.servo_1_pwm if telemetry else None,
-                tower_tilt_pwm=telemetry.servo_2_pwm if telemetry else None,
+                tower_pan_pwm=state.tower_pan_pwm,
+                tower_tilt_pwm=state.tower_tilt_pwm,
                 detections=detections,
             )
 
@@ -786,6 +843,12 @@ class UnifiedCoordinatorRuntime:
             return None
 
     def _publish_result(self, result: CoordinationResult) -> None:
+        mode = result.recommendation.mode
+        if self._published_mode is SearchMode.SEARCH and mode is not SearchMode.SEARCH:
+            now = time.monotonic()
+            for tower in self.towers.values():
+                tower.hold(now)
+        self._published_mode = mode
         self.store.update_recommendation(result.recommendation)
         if result.track_estimate is not None:
             self.store.update_track(
@@ -808,6 +871,7 @@ class UnifiedCoordinatorRuntime:
             reached_at = tower.target_reached_at()
             if (
                 name not in self.executor.enabled_assets
+                or now < self._tower_detection_hold_until[name]
                 or reached_at is None
                 or now - max(reached_at, self._scan_at[name])
                 < self.config.coordinator.tower_dwell_s

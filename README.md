@@ -108,9 +108,13 @@ are clamped to the configured soft limits, then slewed at `pan_rate_deg_s` and
 `tilt_rate_deg_s` using `command_hz` updates. A search scan holds its one-second dwell only after
 the tower reaches the requested pose. The defaults keep pan within -135 to 135 degrees, tilt
 within -15 to 30 degrees, and move at 24 degrees/second pan and 12 degrees/second tilt.
+On a raw tower detection, `tower_detection_hold_s` pauses that tower long enough to obtain a
+settled follow-up observation; accepted tracks interrupt both tower scans.
 
 MJPEG frame timestamps are assigned when WHITEOUT receives each complete JPEG. They are used
 for the 250 ms telemetry match, but they are not guaranteed simulator exposure timestamps.
+Each frame's telemetry, intrinsics, and camera pose are snapshotted before inference, so delayed
+detection results cannot be paired with newer vehicle or tower state.
 The current Fort Ross camera transforms include the simulator's 20-degree
 quadcopter downtilt, 8-degree fixed-wing downtilt, and tower pan/tilt convention. `ReadOnlyMavlink`
 reads absolute position plus synchronized `ATTITUDE`

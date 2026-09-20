@@ -99,6 +99,7 @@ coordinator:
   tick_hz: 10
   command_interval_s: 1
   tower_dwell_s: 1
+  tower_detection_hold_s: 1.5
   tower_horizontal_overlap: 0.20
   dashboard_bind: 127.0.0.1
   dashboard_port: 8070

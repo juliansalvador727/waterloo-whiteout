@@ -41,6 +41,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual([item.name for item in config.tower_motion], ["tower-1", "tower-2"])
         self.assertEqual(config.tower_motion[0].pan_min_deg, -135.0)
         self.assertEqual(config.tower_motion[0].pan_rate_deg_s, 24.0)
+        self.assertEqual(config.coordinator.tower_detection_hold_s, 1.5)
 
     def test_substitution_default_and_missing_value(self) -> None:
         self.assertEqual(substitute_environment("${MISSING:-fallback}", {}), "fallback")
