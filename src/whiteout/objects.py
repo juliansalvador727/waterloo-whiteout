@@ -53,6 +53,48 @@ def _pwm(value: int) -> int:
     return value
 
 
+_TOWER_SERVO_CALIBRATION = {
+    1: (1100, 1900, -144.0, 144.0),
+    2: (1100, 1900, -22.5, 37.5),
+}
+
+
+def _tower_servo_calibration(servo_number: int) -> tuple[int, int, float, float]:
+    try:
+        return _TOWER_SERVO_CALIBRATION[servo_number]
+    except KeyError as exc:
+        raise ValueError("tower servo must be 1 (pan) or 2 (tilt)") from exc
+
+
+def tower_pwm_to_angle(servo_number: int, pwm: int) -> float:
+    """Convert a tower servo PWM value to its physical angle in degrees."""
+    minimum_pwm, maximum_pwm, minimum_angle, maximum_angle = (
+        _tower_servo_calibration(servo_number)
+    )
+    value = _pwm(pwm)
+    if not minimum_pwm <= value <= maximum_pwm:
+        raise ValueError(
+            f"tower servo PWM must be between {minimum_pwm} and {maximum_pwm}"
+        )
+    normalized = (value - minimum_pwm) / (maximum_pwm - minimum_pwm)
+    return minimum_angle + normalized * (maximum_angle - minimum_angle)
+
+
+def tower_angle_to_pwm(servo_number: int, angle_deg: float) -> int:
+    """Convert a tower servo angle in degrees to its PWM command value."""
+    minimum_pwm, maximum_pwm, minimum_angle, maximum_angle = (
+        _tower_servo_calibration(servo_number)
+    )
+    angle = _finite_number(angle_deg, "tower servo angle")
+    if not minimum_angle <= angle <= maximum_angle:
+        raise ValueError(
+            f"tower servo {servo_number} angle must be between "
+            f"{minimum_angle:g} and {maximum_angle:g} degrees"
+        )
+    normalized = (angle - minimum_angle) / (maximum_angle - minimum_angle)
+    return round(minimum_pwm + normalized * (maximum_pwm - minimum_pwm))
+
+
 @dataclass(frozen=True, slots=True)
 class MavProxyCommand:
     """A non-executable MAVProxy console command."""
@@ -316,6 +358,7 @@ class Tower(RepositoryObject):
     object_type: ClassVar[ObjectType] = ObjectType.TOWER
     supported_modes: ClassVar[frozenset[str]] = frozenset({"MANUAL", "AUTO"})
     supports_arming: ClassVar[bool] = False
+    required_mavproxy_modules: ClassVar[tuple[str, ...]] = ("relay",)
 
     @classmethod
     def one(cls, host: str = "127.0.0.1") -> Tower:
@@ -325,28 +368,18 @@ class Tower(RepositoryObject):
     def two(cls, host: str = "127.0.0.1") -> Tower:
         return cls("tower-2", host, 14590)
 
-    def servo(self, servo_number: int, pwm: int) -> MavProxyCommand:
-        if servo_number not in (1, 2):
-            raise ValueError("tower servo must be 1 (pan) or 2 (tilt)")
+    def servo(self, servo_number: int, angle_deg: float) -> MavProxyCommand:
+        pwm = tower_angle_to_pwm(servo_number, angle_deg)
         return MavProxyCommand(
-            "cmdlong",
-            (
-                "MAV_CMD_DO_SET_SERVO",
-                str(servo_number),
-                str(_pwm(pwm)),
-                "0",
-                "0",
-                "0",
-                "0",
-                "0",
-            ),
+            "servo",
+            ("set", str(servo_number), str(pwm)),
         )
 
-    def pan(self, pwm: int) -> MavProxyCommand:
-        return self.servo(1, pwm)
+    def pan(self, angle_deg: float) -> MavProxyCommand:
+        return self.servo(1, angle_deg)
 
-    def tilt(self, pwm: int) -> MavProxyCommand:
-        return self.servo(2, pwm)
+    def tilt(self, angle_deg: float) -> MavProxyCommand:
+        return self.servo(2, angle_deg)
 
     def controller(
         self, *, executable: str = "mavproxy.py", connection_timeout_s: float = 15.0

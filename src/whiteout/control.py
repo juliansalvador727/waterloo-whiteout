@@ -341,12 +341,12 @@ class PlaneController(ObjectController[Plane]):
 class TowerController(ObjectController[Tower]):
     """Typed pan/tilt functions for one simulated tower."""
 
-    def pan(self, pwm: int) -> None:
-        self._send(self.vehicle.pan(pwm))
+    def pan(self, angle_deg: float) -> None:
+        self._send(self.vehicle.pan(angle_deg))
 
-    def tilt(self, pwm: int) -> None:
-        self._send(self.vehicle.tilt(pwm))
+    def tilt(self, angle_deg: float) -> None:
+        self._send(self.vehicle.tilt(angle_deg))
 
     def center(self) -> None:
-        self.pan(1500)
-        self.tilt(1500)
+        self.pan(0)
+        self.tilt(7.5)

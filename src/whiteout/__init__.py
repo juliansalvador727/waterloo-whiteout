@@ -38,6 +38,8 @@ from .objects import (
     Tower,
     UnsupportedCommand,
     object_for_type,
+    tower_angle_to_pwm,
+    tower_pwm_to_angle,
 )
 
 __all__ = [
@@ -77,6 +79,8 @@ __all__ = [
     "UnsupportedCommand",
     "arctic_sim_fleet",
     "object_for_type",
+    "tower_angle_to_pwm",
+    "tower_pwm_to_angle",
 ]
 
 __version__ = "0.1.0"

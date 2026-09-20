@@ -87,10 +87,10 @@ class MavProxyTests(unittest.TestCase):
         ):
             tower = Tower.two("arctic.example")
             with tower.mavproxy_session() as session:
-                session.send(tower.pan(1200))
+                session.send(tower.pan(-108))
         self.assertEqual(
             process.stdin.getvalue(),
-            "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0\nexit\n",
+            "module load relay\nservo set 1 1200\nexit\n",
         )
 
     def test_missing_mavproxy_has_clear_install_message(self) -> None:

@@ -118,11 +118,19 @@ with Plane(host="10.99.0.1").controller() as plane:
     plane.set_mode(PlaneMode.LOITER)
 
 with Tower.one("10.99.0.1").controller() as tower:
-    tower.pan(1200)
-    tower.tilt(1700)
+    tower.pan(-108)
+    tower.tilt(22.5)
 ```
 
-`CopterMode` and `PlaneMode` are separate enums, so modes cannot be mixed between vehicle types. Towers do not support arming. Pan and tilt use MAVProxy's built-in `cmdlong` command with `MAV_CMD_DO_SET_SERVO`, without an optional servo module. Unsupported operations, invalid modes, and PWM values outside 1000 to 2000 are rejected before transmission.
+`CopterMode` and `PlaneMode` are separate enums, so modes cannot be mixed between vehicle types. Towers do not support arming. With the current 1100 to 1900 PWM limits, pan accepts -144 to 144 degrees and tilt accepts -22.5 to 37.5 degrees. The controller converts those angles to PWM, loads MAVProxy's `relay` module, and transmits `servo set <1|2> <PWM>`. Unsupported operations and angles outside the reachable range are rejected before transmission.
+
+Run a bounded live tower test only when the simulator operator expects movement:
+
+```sh
+python scripts/test_tower.py tower-1 --pan-deg -45 --tilt-deg 15 --confirm-movement
+```
+
+The script centers the tower, moves it to the requested angles, holds briefly, and returns it to center. Use `tower-2` to test the second tower.
 
 Low-level `MavProxyCommand` builders remain available for unusual cases. Building a command does not execute it. Transmission only occurs through a running `MavProxySession` or typed controller.
 

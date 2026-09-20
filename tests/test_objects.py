@@ -14,6 +14,8 @@ from whiteout.objects import (
     Tower,
     UnsupportedCommand,
     object_for_type,
+    tower_angle_to_pwm,
+    tower_pwm_to_angle,
 )
 
 
@@ -49,15 +51,25 @@ class ObjectTests(unittest.TestCase):
 
         tower = Tower.two()
         self.assertEqual(
-            str(tower.pan(1200)),
-            "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0",
+            str(tower.pan(-108)),
+            "servo set 1 1200",
         )
         self.assertEqual(
-            str(tower.tilt(1700)),
-            "cmdlong MAV_CMD_DO_SET_SERVO 2 1700 0 0 0 0 0",
+            str(tower.tilt(22.5)),
+            "servo set 2 1700",
         )
         with self.assertRaises(UnsupportedCommand):
             tower.arm()
+
+    def test_tower_servo_angle_and_pwm_conversion(self) -> None:
+        self.assertEqual(tower_angle_to_pwm(1, -144), 1100)
+        self.assertEqual(tower_angle_to_pwm(1, 0), 1500)
+        self.assertEqual(tower_angle_to_pwm(1, 144), 1900)
+        self.assertEqual(tower_pwm_to_angle(1, 1200), -108)
+        self.assertEqual(tower_angle_to_pwm(2, -22.5), 1100)
+        self.assertEqual(tower_angle_to_pwm(2, 7.5), 1500)
+        self.assertEqual(tower_angle_to_pwm(2, 37.5), 1900)
+        self.assertEqual(tower_pwm_to_angle(2, 1700), 22.5)
 
     def test_invalid_or_unsupported_values_are_rejected(self) -> None:
         with self.assertRaises(UnsupportedCommand):
@@ -65,7 +77,11 @@ class ObjectTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Copter().rc(3, 2500)
         with self.assertRaises(ValueError):
-            Tower().pan(999)
+            Tower().pan(-145)
+        with self.assertRaises(ValueError):
+            Tower().tilt(38)
+        with self.assertRaises(ValueError):
+            Tower().servo(3, 0)
         with self.assertRaises(ValueError):
             Copter().watch("ATTITUDE\nreboot")
         with self.assertRaises(ValueError):

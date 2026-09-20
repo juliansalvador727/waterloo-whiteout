@@ -157,19 +157,19 @@ class TypedControllerTests(unittest.TestCase):
             all(float(row[8]) > mountain_latitude for row in navigated_rows)
         )
 
-    def test_tower_functions_use_cmdlong_without_optional_servo_module(self) -> None:
+    def test_tower_functions_convert_degrees_and_use_servo_set(self) -> None:
         controller, session = self.controller_for(Tower.two())
         self.assertIsInstance(controller, TowerController)
         controller.start()
-        controller.pan(1200)
-        controller.tilt(1700)
+        controller.pan(-108)
+        controller.tilt(22.5)
         controller.close()
 
         self.assertEqual(
             [str(call.args[0]) for call in session.send.call_args_list],
             [
-                "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0",
-                "cmdlong MAV_CMD_DO_SET_SERVO 2 1700 0 0 0 0 0",
+                "servo set 1 1200",
+                "servo set 2 1700",
             ],
         )
 

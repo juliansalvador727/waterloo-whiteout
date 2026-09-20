@@ -9,7 +9,9 @@ description = "Safety-first controller scaffold for Dominion Dynamics WHITEOUT"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Proprietary"}
-dependencies = []
+dependencies = [
+    "mavproxy>=1.8.74",
+]
 
 [project.optional-dependencies]
 camera = ["opencv-python-headless>=4.8"]
