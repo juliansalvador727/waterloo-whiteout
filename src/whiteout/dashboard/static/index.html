@@ -268,6 +268,9 @@
           map.addSource('camera-cones',{type:'geojson',data:emptyCollection()});
           map.addSource('sightline',{type:'geojson',data:emptyCollection()});
           map.addSource('target-live',{type:'geojson',data:emptyCollection()});
+          map.addSource('reacquisition-grid',{type:'geojson',data:emptyCollection()});
+          map.addLayer({id:'reacquisition-grid-fill',type:'fill',source:'reacquisition-grid',paint:{'fill-color':['interpolate',['linear'],['get','weight'],0,'#45d9f5',1,'#ffbf69',8,'#ff4d6d'],'fill-opacity':['interpolate',['linear'],['get','weight'],0,.025,1,.16,8,.48]}});
+          map.addLayer({id:'reacquisition-grid-line',type:'line',source:'reacquisition-grid',paint:{'line-color':'#8ddfeb','line-opacity':.28,'line-width':.7}});
           map.addLayer({id:'camera-cones-fill',type:'fill',source:'camera-cones',paint:{'fill-color':'#45d9f5','fill-opacity':.13}});
           map.addLayer({id:'camera-cones-line',type:'line',source:'camera-cones',paint:{'line-color':'#45d9f5','line-opacity':.8,'line-width':1.2}});
           map.addLayer({id:'sightline',type:'line',source:'sightline',paint:{'line-color':'#ffbf69','line-width':2,'line-dasharray':[2,2]}});
@@ -340,6 +343,16 @@
 
     function updateMap(state) {
       if(!mapReady)return;
+      const grid=state.reacquisition_grid, gridFeatures=[];
+      if(grid&&Array.isArray(grid.bounds)&&grid.rows>0&&grid.columns>0){
+        const [west,south,east,north]=grid.bounds, latStep=(north-south)/grid.rows, lonStep=(east-west)/grid.columns;
+        const weights=new Map((grid.cells||[]).map(cell=>[`${cell.row}:${cell.column}`,Number(cell.weight)||0]));
+        for(let row=0;row<grid.rows;row++)for(let column=0;column<grid.columns;column++){
+          const cellWest=west+column*lonStep,cellEast=cellWest+lonStep,cellSouth=south+row*latStep,cellNorth=cellSouth+latStep;
+          gridFeatures.push({type:'Feature',properties:{row,column,weight:weights.get(`${row}:${column}`)||0},geometry:{type:'Polygon',coordinates:[[[cellWest,cellSouth],[cellEast,cellSouth],[cellEast,cellNorth],[cellWest,cellNorth],[cellWest,cellSouth]]]}});
+        }
+      }
+      map.getSource('reacquisition-grid').setData({type:'FeatureCollection',features:gridFeatures});
       const coneFeatures=[];
       Object.values(state.assets||{}).forEach(asset=>{
         const telemetry=asset.telemetry;

@@ -209,7 +209,12 @@ class SessionReplay:
         if event.kind == "frame.saved":
             path = self.directory / str(payload["path"])
             if path.is_file():
-                self.store.update_frame(CameraFrame(event.source, path.read_bytes(), event.timestamp))
+                self.store.update_frame(CameraFrame(
+                    event.source,
+                    path.read_bytes(),
+                    event.timestamp,
+                    crop_right_px=int(payload.get("crop_right_px", 0)),
+                ))
         elif event.kind == "site.updated":
             bounds = payload.get("bounds3413")
             self.store.set_site(

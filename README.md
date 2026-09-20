@@ -116,6 +116,11 @@ within -15 to 30 degrees, and move at 24 degrees/second pan and 12 degrees/secon
 On a raw tower detection, `tower_detection_hold_s` pauses that tower long enough to obtain a
 settled follow-up observation; accepted tracks interrupt both tower scans.
 
+The configured course is also divided into a weighted reacquisition grid. Every accepted
+geolocated detection increases evidence in its cell. During target dropout, the predicted track
+is biased toward recent high-weight cells in its configured neighborhood; evidence decays by
+half every `reacquire_grid_half_life_s` so old sightings do not dominate later searches.
+
 MJPEG frame timestamps are assigned when WHITEOUT receives each complete JPEG. They are used
 for the 250 ms telemetry match, but they are not guaranteed simulator exposure timestamps.
 Each frame's telemetry, intrinsics, and camera pose are snapshotted before inference, so delayed
@@ -138,6 +143,10 @@ The configured role mapping is:
 | `fixed-wing` | `http://<SIM_HOST>:8610/stream` | `udpout:<SIM_HOST>:14560` |
 | `tower-1` | `http://<SIM_HOST>:8630/stream` | `udpout:<SIM_HOST>:14580` |
 | `tower-2` | `http://<SIM_HOST>:8640/stream` | `udpout:<SIM_HOST>:14590` |
+
+Camera entries may set `crop_right_px`. The coordinator configuration crops 40 pixels
+from the quadcopter frame's right edge before display and inference while preserving
+the uncropped camera calibration for geolocation.
 
 All cameras use `/stream`. ArcticSim's MAVProxy endpoints are `udpin` listeners, so both the telemetry adapter and managed MAVProxy sessions connect with `udpout`.
 

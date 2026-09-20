@@ -31,6 +31,7 @@ from .pose import (
 )
 from .simulator_metadata import ArcticSimMetadataClient, GeneratedAssetPose
 from .runtime import UnifiedCoordinatorRuntime
+from .reacquisition_grid import GridCell, WeightedReacquisitionGrid
 from .tower import (
     FORT_ROSS_TOWERS,
     MAX_TOWER_SCAN_HORIZONTAL_STEP_DEG,
@@ -93,6 +94,7 @@ __all__ = [
     "FORT_ROSS_TOWERS",
     "FixedWingPlane",
     "GeneratedAssetPose",
+    "GridCell",
     "MavProxyCommand",
     "MavProxyConnectionError",
     "MissionUploadError",
@@ -136,6 +138,7 @@ __all__ = [
     "TrackApiSubmitter",
     "TrackSink",
     "UnifiedCoordinatorRuntime",
+    "WeightedReacquisitionGrid",
     "VehicleStateError",
     "UnsupportedCommand",
     "arctic_sim_fleet",

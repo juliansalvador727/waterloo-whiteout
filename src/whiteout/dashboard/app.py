@@ -82,7 +82,12 @@ class DashboardRuntime:
         for camera_config in self.config.cameras:
             thread = threading.Thread(
                 target=self._camera_worker,
-                args=(camera_config.name, camera_config.port, camera_config.path),
+                args=(
+                    camera_config.name,
+                    camera_config.port,
+                    camera_config.path,
+                    camera_config.crop_right_px,
+                ),
                 name=f"camera-{camera_config.name}",
                 daemon=True,
             )
@@ -136,9 +141,15 @@ class DashboardRuntime:
             logger.warning("Simulator site metadata unavailable at %s", url)
             return
 
-    def _camera_worker(self, name: str, port: int, path: str) -> None:
+    def _camera_worker(
+        self, name: str, port: int, path: str, crop_right_px: int = 0
+    ) -> None:
         assert self.config is not None
-        camera = MjpegCamera(name, f"http://{self.config.sim_host}:{port}{path}")
+        camera = MjpegCamera(
+            name,
+            f"http://{self.config.sim_host}:{port}{path}",
+            crop_right_px=crop_right_px,
+        )
         for frame in camera.frames():
             if self._stop.is_set():
                 return
@@ -189,12 +200,7 @@ def _dependency_error(exc: ImportError) -> DashboardDependencyError:
 
 
 def _decode_frame(frame: CameraFrame):
-    try:
-        import cv2  # type: ignore[import-not-found]
-        import numpy as np  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise _dependency_error(exc) from exc
-    return cv2.imdecode(np.frombuffer(frame.jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+    return frame.decode_bgr()
 
 
 def _annotated_jpeg(store: MissionStateStore, camera: str) -> bytes | None:

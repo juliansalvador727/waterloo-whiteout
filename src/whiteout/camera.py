@@ -172,6 +172,7 @@ class CameraFrame:
     camera: str
     jpeg: bytes
     timestamp: datetime
+    crop_right_px: int = 0
 
     def decode_bgr(self):
         """Decode with OpenCV when its optional dependency is installed."""
@@ -183,6 +184,12 @@ class CameraFrame:
         image = cv2.imdecode(np.frombuffer(self.jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             raise ValueError("invalid JPEG frame")
+        if self.crop_right_px < 0 or self.crop_right_px >= image.shape[1]:
+            raise ValueError(
+                f"invalid right crop {self.crop_right_px} for {image.shape[1]}px frame"
+            )
+        if self.crop_right_px:
+            image = image[:, : -self.crop_right_px]
         return image
 
 
@@ -194,12 +201,14 @@ class MjpegCamera:
         *,
         reconnect_delay_s: float = 1.0,
         timeout_s: float = 5.0,
+        crop_right_px: int = 0,
         opener: Callable[..., object] = urllib.request.urlopen,
     ) -> None:
         self.name = name
         self.url = url
         self.reconnect_delay_s = reconnect_delay_s
         self.timeout_s = timeout_s
+        self.crop_right_px = crop_right_px
         self._opener = opener
 
     def frames(self, *, reconnect: bool = True) -> Iterator[CameraFrame]:
@@ -226,6 +235,11 @@ class MjpegCamera:
                     break
                 jpeg = bytes(buffer[start : end + 2])
                 del buffer[: end + 2]
-                yield CameraFrame(self.name, jpeg, datetime.now(timezone.utc))
+                yield CameraFrame(
+                    self.name,
+                    jpeg,
+                    datetime.now(timezone.utc),
+                    crop_right_px=self.crop_right_px,
+                )
             if len(buffer) > 8_000_000:
                 del buffer[:-2]

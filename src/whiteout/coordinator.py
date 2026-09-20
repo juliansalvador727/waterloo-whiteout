@@ -19,6 +19,7 @@ from .models import (
     TrackEstimate,
 )
 from .observation import ObservationMetadata, SynchronizationStatus
+from .reacquisition_grid import WeightedReacquisitionGrid
 from .tower import FORT_ROSS_TOWERS, TowerCalibration, TowerWorldPose
 from .tracker import ConstantVelocityTracker
 
@@ -55,6 +56,7 @@ class Coordinator:
     tower_poses: tuple[TowerWorldPose, ...] = field(
         default_factory=lambda: FORT_ROSS_TOWERS
     )
+    reacquisition_grid: WeightedReacquisitionGrid | None = None
     _confirmations: int = 0
     _last_seen_s: float | None = None
     _track_started_s: float | None = None
@@ -89,7 +91,25 @@ class Coordinator:
     @classmethod
     def from_config(cls, config: AppConfig, **kwargs: object) -> Coordinator:
         """Build a coordinator using the configured geographic course bounds."""
-        return cls(course_bounds=config.course_bounds, **kwargs)
+        options = dict(kwargs)
+        options.setdefault("course_bounds", config.course_bounds)
+        if config.course_bounds is not None:
+            options.setdefault(
+                "reacquisition_grid",
+                WeightedReacquisitionGrid(
+                    config.course_bounds.south,
+                    config.course_bounds.west,
+                    config.course_bounds.north,
+                    config.course_bounds.east,
+                    rows=config.coordinator.reacquire_grid_rows,
+                    columns=config.coordinator.reacquire_grid_columns,
+                    half_life_s=config.coordinator.reacquire_grid_half_life_s,
+                    neighborhood_cells=(
+                        config.coordinator.reacquire_grid_neighborhood_cells
+                    ),
+                ),
+            )
+        return cls(**options)
 
     def coordinate(
         self,
@@ -116,6 +136,8 @@ class Coordinator:
                 )
 
             self._last_seen_s = now_s
+            if self.reacquisition_grid is not None:
+                self.reacquisition_grid.observe(estimate, now_s)
             if self._track_started_s is None:
                 self._track_started_s = now_s
             self._confirmations += 1
@@ -219,16 +241,25 @@ class Coordinator:
             self.mode = SearchMode.REACQUIRE
             target = None
             intents: tuple[ControlIntent, ...] = ()
+            reason = "target temporarily lost"
             if predicted is not None:
                 target = GeoEstimate(predicted.latitude, predicted.longitude, predicted.uncertainty_m, predicted.last_update)
+                if self.reacquisition_grid is not None:
+                    target = self.reacquisition_grid.weighted_target(target, now_s)
+                    reason += "; weighted reacquisition grid"
                 intents = self._target_intents(
                     "reacquire",
                     "reacquire",
                     target,
-                    "target temporarily lost",
+                    reason,
                 )
             return CoordinationResult(
-                ActionRecommendation(self.mode, "search_near_last_track", "target temporarily lost", target),
+                ActionRecommendation(
+                    self.mode,
+                    "search_near_last_track",
+                    reason,
+                    target,
+                ),
                 track_estimate,
                 intents,
             )

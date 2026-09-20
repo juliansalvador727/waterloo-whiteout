@@ -42,7 +42,11 @@ def observe_camera(config: AppConfig, name: str, max_frames: int) -> int:
     detector = NoOpDetector()
     coordinator = Coordinator()
     logger = JsonlLogger(config.logging.jsonl_path) if config.logging.jsonl_path else None
-    camera = MjpegCamera(name, f"http://{config.sim_host}:{selected.port}{selected.path}")
+    camera = MjpegCamera(
+        name,
+        f"http://{config.sim_host}:{selected.port}{selected.path}",
+        crop_right_px=selected.crop_right_px,
+    )
     for count, frame in enumerate(camera.frames(), start=1):
         detections = detector.detect(frame)
         recommendation = coordinator.decide(time.monotonic(), None)

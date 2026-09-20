@@ -13,6 +13,7 @@ from whiteout.camera import (
     camera_model,
 )
 from whiteout.coordinator import Coordinator
+from whiteout.config import AppConfig, CourseBounds, CoordinatorConfig
 from whiteout.execution import (
     LiveExecutor,
     LiveTrackSink,
@@ -276,6 +277,22 @@ class EffectsBoundaryTests(unittest.TestCase):
 
 
 class IntegratedCoordinatorTests(unittest.TestCase):
+    def test_from_config_builds_weighted_reacquisition_grid(self) -> None:
+        coordinator = Coordinator.from_config(AppConfig(
+            course_bounds=CourseBounds(71.9, -95.1, 72.1, -94.9),
+            coordinator=CoordinatorConfig(
+                reacquire_grid_rows=8,
+                reacquire_grid_columns=9,
+                reacquire_grid_half_life_s=20,
+                reacquire_grid_neighborhood_cells=1,
+            ),
+        ))
+        self.assertIsNotNone(coordinator.reacquisition_grid)
+        assert coordinator.reacquisition_grid is not None
+        self.assertEqual(coordinator.reacquisition_grid.rows, 8)
+        self.assertEqual(coordinator.reacquisition_grid.columns, 9)
+        self.assertEqual(coordinator.reacquisition_grid.half_life_s, 20)
+
     def test_original_decide_confirmation_configuration_and_positional_mode(self) -> None:
         estimate = GeoEstimate(72, -95, 2)
         coordinator = Coordinator(1, 2, 10, SearchMode.SEARCH)

@@ -46,6 +46,7 @@ cameras:
     height: 720
     hfov_deg: 114.6
     vfov_deg: 99.4
+    crop_right_px: 40
   - name: fixed-wing
     port: 8610
     path: /stream
@@ -101,5 +102,9 @@ coordinator:
   tower_dwell_s: 1
   tower_detection_hold_s: 1.5
   tower_horizontal_overlap: 0.20
+  reacquire_grid_rows: 12
+  reacquire_grid_columns: 12
+  reacquire_grid_half_life_s: 30
+  reacquire_grid_neighborhood_cells: 2
   dashboard_bind: 127.0.0.1
   dashboard_port: 8070

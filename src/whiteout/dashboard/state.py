@@ -162,6 +162,7 @@ class MissionStateStore:
         self._track: Track | None = None
         self._observed_at: datetime | None = None
         self._observed_by: str | None = None
+        self._reacquisition_grid: dict[str, Any] | None = None
         self._submission = {"status": "DISABLED", "detail": "no submissions observed", "timestamp": None}
 
     @property
@@ -209,7 +210,11 @@ class MissionStateStore:
                     self._publish(
                         "frame.saved",
                         frame.camera,
-                        {"camera": frame.camera, "path": path},
+                        {
+                            "camera": frame.camera,
+                            "path": path,
+                            "crop_right_px": frame.crop_right_px,
+                        },
                         timestamp=frame.timestamp,
                     )
 
@@ -305,6 +310,10 @@ class MissionStateStore:
                     "reason": recommendation.reason,
                 },
             )
+
+    def update_reacquisition_grid(self, grid: Mapping[str, Any]) -> None:
+        with self._lock:
+            self._reacquisition_grid = dict(grid)
 
     def update_track(self, track: Track, *, observed: bool, sensor: str | None = None) -> None:
         with self._lock:
@@ -505,6 +514,7 @@ class MissionStateStore:
                 "site": asdict(self._site) if self._site else None,
                 "assets": assets,
                 "target": target,
+                "reacquisition_grid": self._reacquisition_grid,
                 "submission": dict(self._submission),
                 "events": [event.to_dict() for event in list(self._events)[-event_limit:]],
             }

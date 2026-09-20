@@ -21,6 +21,7 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual([camera.port for camera in config.cameras], [8600, 8610, 8630, 8640])
         self.assertEqual([camera.path for camera in config.cameras], ["/stream"] * 4)
+        self.assertEqual([camera.crop_right_px for camera in config.cameras], [40, 0, 0, 0])
         self.assertEqual(
             [(camera.width, camera.height, camera.hfov_deg, camera.vfov_deg) for camera in config.cameras],
             [
@@ -42,6 +43,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.tower_motion[0].pan_min_deg, -135.0)
         self.assertEqual(config.tower_motion[0].pan_rate_deg_s, 24.0)
         self.assertEqual(config.coordinator.tower_detection_hold_s, 1.5)
+        self.assertEqual(config.coordinator.reacquire_grid_rows, 12)
+        self.assertEqual(config.coordinator.reacquire_grid_columns, 12)
 
     def test_substitution_default_and_missing_value(self) -> None:
         self.assertEqual(substitute_environment("${MISSING:-fallback}", {}), "fallback")
@@ -69,6 +72,21 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "pan limits"):
             config_from_mapping({
                 "tower_motion": {"tower-1": {"pan_min_deg": -150}}
+            })
+
+    def test_camera_crop_validation(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "invalid right crop"):
+            config_from_mapping({
+                "cameras": [{"name": "quadcopter", "port": 8600, "crop_right_px": -1}]
+            })
+        with self.assertRaisesRegex(ConfigError, "must be smaller than its width"):
+            config_from_mapping({
+                "cameras": [{
+                    "name": "quadcopter",
+                    "port": 8600,
+                    "width": 40,
+                    "crop_right_px": 40,
+                }]
             })
 
 

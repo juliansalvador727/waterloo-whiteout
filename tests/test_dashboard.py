@@ -85,6 +85,17 @@ class DashboardStateTests(unittest.TestCase):
         self.assertGreater(y_m, -1_271_830.9)
         self.assertLess(y_m, -1_265_362.1)
 
+    def test_reacquisition_grid_is_exposed_in_dashboard_snapshot(self) -> None:
+        store = MissionStateStore()
+        grid = {
+            "bounds": [-95.0, 71.9, -94.8, 72.1],
+            "rows": 12,
+            "columns": 12,
+            "cells": [{"row": 4, "column": 7, "weight": 3.0}],
+        }
+        store.update_reacquisition_grid(grid)
+        self.assertEqual(store.snapshot(now=self.now)["reacquisition_grid"], grid)
+
     def test_runtime_exposes_camera_horizontal_fov(self) -> None:
         from whiteout.config import config_from_mapping
 
@@ -165,6 +176,19 @@ class DashboardFrontendTests(unittest.TestCase):
         fit_map = index[index.index("function fitMap()") : index.index("function updateMap(state)")]
         self.assertIn("setFollow(false)", fit_map)
 
+    def test_dashboard_renders_weighted_reacquisition_grid(self) -> None:
+        index = (
+            Path(__file__).parents[1]
+            / "src"
+            / "whiteout"
+            / "dashboard"
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn("map.addSource('reacquisition-grid'", index)
+        self.assertIn("reacquisition-grid-fill", index)
+        self.assertIn("const grid=state.reacquisition_grid", index)
+
 
 class DashboardRecordingTests(unittest.TestCase):
     def test_recording_redacts_secrets_and_replays_state(self) -> None:
@@ -176,7 +200,9 @@ class DashboardRecordingTests(unittest.TestCase):
                 frame_sample_hz=2.0,
             )
             source = MissionStateStore(recorder=recorder)
-            source.update_frame(CameraFrame("tower-1", b"\xff\xd8fake\xff\xd9", now))
+            source.update_frame(CameraFrame(
+                "tower-1", b"\xff\xd8fake\xff\xd9", now, crop_right_px=40
+            ))
             source.update_telemetry(Telemetry("tower-1", 71.99, -94.82, 30.0, timestamp=now))
             source.update_telemetry(
                 Telemetry(
@@ -223,6 +249,8 @@ class DashboardRecordingTests(unittest.TestCase):
             )
             self.assertEqual(snapshot["target"]["observed_by"], "tower-1")
             self.assertIsNotNone(replay.store.latest_frame("tower-1"))
+            assert replay.store.latest_frame("tower-1") is not None
+            self.assertEqual(replay.store.latest_frame("tower-1").crop_right_px, 40)
 
 
 @unittest.skipUnless(

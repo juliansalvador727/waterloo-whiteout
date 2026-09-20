@@ -434,6 +434,13 @@ class UnifiedCoordinatorRuntime:
             on_result=self._publish_result,
         )
         self.camera_models = {camera.name: _camera_model(camera) for camera in config.cameras}
+        # Intrinsics describe the uncropped sensor. A right-edge-only crop keeps
+        # the original pixel origin and principal point, so it must not be
+        # recalibrated as though the smaller image were centered.
+        self.camera_intrinsics = {
+            name: model.intrinsics for name, model in self.camera_models.items()
+        }
+        self._update_reacquisition_grid()
 
     @classmethod
     def build_live(
@@ -680,6 +687,7 @@ class UnifiedCoordinatorRuntime:
         camera = MjpegCamera(
             camera_config.name,
             f"http://{self.config.sim_host}:{camera_config.port}{camera_config.path}",
+            crop_right_px=camera_config.crop_right_px,
         )
         for frame in camera.frames():
             if self._stop.is_set():
@@ -688,22 +696,26 @@ class UnifiedCoordinatorRuntime:
             if frame.camera not in self._geometry_seen:
                 self._geometry_seen.add(frame.camera)
                 try:
-                    height, width = frame.decode_bgr().shape[:2]
+                    height, visible_width = frame.decode_bgr().shape[:2]
                 except (RuntimeError, ValueError) as exc:
                     self.output(f"camera geometry unavailable for {frame.camera}: {exc}")
                 else:
+                    source_width = visible_width + frame.crop_right_px
                     model = self.camera_models[frame.camera]
-                    if (width, height) != (model.width_px, model.height_px):
-                        self.camera_models[frame.camera] = CameraModel(
+                    if (source_width, height) != (model.width_px, model.height_px):
+                        adjusted = CameraModel(
                             model.name,
-                            width,
+                            source_width,
                             height,
                             model.horizontal_fov_deg,
                             model.vertical_fov_deg,
                         )
+                        self.camera_models[frame.camera] = adjusted
+                        self.camera_intrinsics[frame.camera] = adjusted.intrinsics
                         self.output(
                             f"Camera geometry adjusted: {frame.camera} "
-                            f"{model.width_px}x{model.height_px} -> {width}x{height}"
+                            f"{model.width_px}x{model.height_px} -> "
+                            f"{source_width}x{height} source, {visible_width}x{height} visible"
                         )
             if frame.camera not in self._camera_seen:
                 self._camera_seen.add(frame.camera)
@@ -753,7 +765,7 @@ class UnifiedCoordinatorRuntime:
         return FrameState(
             frame=frame,
             telemetry=telemetry,
-            intrinsics=self.camera_models[frame.camera].intrinsics,
+            intrinsics=self.camera_intrinsics[frame.camera],
             pose=self._pose(frame.camera, telemetry),
             tower_pan_pwm=telemetry.servo_1_pwm if telemetry else None,
             tower_tilt_pwm=telemetry.servo_2_pwm if telemetry else None,
@@ -851,12 +863,33 @@ class UnifiedCoordinatorRuntime:
                 tower.hold(now)
         self._published_mode = mode
         self.store.update_recommendation(result.recommendation)
+        self._update_reacquisition_grid()
         if result.track_estimate is not None:
             self.store.update_track(
                 result.track_estimate.track,
                 observed=result.track_estimate.source is not None,
                 sensor=result.track_estimate.source,
             )
+
+    def _update_reacquisition_grid(self) -> None:
+        grid = self.pipeline.coordinator.reacquisition_grid if hasattr(self, "pipeline") else None
+        if grid is None:
+            return
+        self.store.update_reacquisition_grid({
+            "bounds": [grid.west, grid.south, grid.east, grid.north],
+            "rows": grid.rows,
+            "columns": grid.columns,
+            "cells": [
+                {
+                    "row": cell.row,
+                    "column": cell.column,
+                    "weight": cell.weight,
+                    "evidence_latitude": cell.evidence_latitude,
+                    "evidence_longitude": cell.evidence_longitude,
+                }
+                for cell in grid.cells(time.monotonic())
+            ],
+        })
 
     def _publish_detection(self, detection: Detection) -> None:
         self.store.update_detection(detection)

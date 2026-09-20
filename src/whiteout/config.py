@@ -25,6 +25,7 @@ class CameraConfig:
     height: int | None = None
     hfov_deg: float | None = None
     vfov_deg: float | None = None
+    crop_right_px: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,10 @@ class CoordinatorConfig:
     tower_dwell_s: float = 1.0
     tower_detection_hold_s: float = 1.5
     tower_horizontal_overlap: float = 0.20
+    reacquire_grid_rows: int = 12
+    reacquire_grid_columns: int = 12
+    reacquire_grid_half_life_s: float = 30.0
+    reacquire_grid_neighborhood_cells: int = 2
     dashboard_bind: str = "127.0.0.1"
     dashboard_port: int = 8070
 
@@ -93,7 +98,15 @@ class CourseBounds:
 
 def _default_cameras() -> tuple[CameraConfig, ...]:
     return (
-        CameraConfig("quadcopter", 8600, width=960, height=720, hfov_deg=114.6, vfov_deg=99.4),
+        CameraConfig(
+            "quadcopter",
+            8600,
+            width=960,
+            height=720,
+            hfov_deg=114.6,
+            vfov_deg=99.4,
+            crop_right_px=40,
+        ),
         CameraConfig("fixed-wing", 8610, width=1280, height=720, hfov_deg=69.0, vfov_deg=42.6),
         CameraConfig("tower-1", 8630, width=1280, height=720, hfov_deg=60.0, vfov_deg=36.1),
         CameraConfig("tower-2", 8640, width=1280, height=720, hfov_deg=60.0, vfov_deg=36.1),
@@ -177,6 +190,7 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
                 height=int(item["height"]) if item.get("height") is not None else None,
                 hfov_deg=float(item["hfov_deg"]) if item.get("hfov_deg") is not None else None,
                 vfov_deg=float(item["vfov_deg"]) if item.get("vfov_deg") is not None else None,
+                crop_right_px=int(item.get("crop_right_px", 0)),
             )
             for item in cameras_data
         )
@@ -255,6 +269,10 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
             tower_dwell_s=float(coordinator_data.get("tower_dwell_s", 1.0)),
             tower_detection_hold_s=float(coordinator_data.get("tower_detection_hold_s", 1.5)),
             tower_horizontal_overlap=float(coordinator_data.get("tower_horizontal_overlap", 0.20)),
+            reacquire_grid_rows=int(coordinator_data.get("reacquire_grid_rows", 12)),
+            reacquire_grid_columns=int(coordinator_data.get("reacquire_grid_columns", 12)),
+            reacquire_grid_half_life_s=float(coordinator_data.get("reacquire_grid_half_life_s", 30.0)),
+            reacquire_grid_neighborhood_cells=int(coordinator_data.get("reacquire_grid_neighborhood_cells", 2)),
             dashboard_bind=str(coordinator_data.get("dashboard_bind", "127.0.0.1")),
             dashboard_port=int(coordinator_data.get("dashboard_port", 8070)),
         ),
@@ -286,6 +304,14 @@ def _validate(config: AppConfig) -> None:
             raise ConfigError(f"invalid horizontal FOV for {camera.name}: {camera.hfov_deg}")
         if camera.vfov_deg is not None and not 0 < camera.vfov_deg < 180:
             raise ConfigError(f"invalid vertical FOV for {camera.name}: {camera.vfov_deg}")
+        if camera.crop_right_px < 0:
+            raise ConfigError(
+                f"invalid right crop for {camera.name}: {camera.crop_right_px}"
+            )
+        if camera.width is not None and camera.crop_right_px >= camera.width:
+            raise ConfigError(
+                f"right crop for {camera.name} must be smaller than its width"
+            )
     if config.track_api.allow_submission and not config.track_api.endpoint:
         raise ConfigError("track submission opt-in requires endpoint")
     if not config.track_api.name.strip():
@@ -304,6 +330,13 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("coordinator timing values must be positive")
     if not 0.20 <= runtime.tower_horizontal_overlap < 1:
         raise ConfigError("tower horizontal overlap must be in [0.20, 1)")
+    if runtime.reacquire_grid_rows <= 0 or runtime.reacquire_grid_columns <= 0:
+        raise ConfigError("reacquisition grid dimensions must be positive")
+    if (
+        runtime.reacquire_grid_half_life_s <= 0
+        or runtime.reacquire_grid_neighborhood_cells < 0
+    ):
+        raise ConfigError("reacquisition grid decay and neighborhood are invalid")
     if not 1 <= runtime.dashboard_port <= 65535:
         raise ConfigError("coordinator dashboard port must be between 1 and 65535")
     if config.tower_poses and {pose.name for pose in config.tower_poses} != {"tower-1", "tower-2"}:

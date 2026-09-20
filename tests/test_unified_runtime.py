@@ -192,6 +192,26 @@ class UnifiedRuntimeTests(unittest.TestCase):
         self.assertEqual(state.pose.latitude, 72)
         self.assertEqual(state.pose.altitude_m, 100)
 
+    def test_quadcopter_right_crop_preserves_uncropped_intrinsics(self) -> None:
+        controllers = {name: Mock() for name in ("quadcopter", "fixed-wing", "tower-1", "tower-2")}
+        runtime = UnifiedCoordinatorRuntime(
+            AppConfig(course_bounds=CourseBounds(70, -100, 75, -90)),
+            detector=Mock(),
+            controllers=controllers,
+            telemetry_readers={},
+            tower_poses=FORT_ROSS_TOWERS,
+            submit_tracks=False,
+            operator="tester",
+        )
+        frame = CameraFrame(
+            "quadcopter", b"jpeg", datetime.now(timezone.utc), crop_right_px=40
+        )
+
+        state = runtime._capture_frame_state(frame)
+
+        self.assertEqual(state.intrinsics.cx_px, 479.5)
+        self.assertEqual(state.intrinsics.cy_px, 359.5)
+
     def test_empty_or_partial_metadata_uses_explicit_tower_poses(self) -> None:
         self.assertIs(_resolve_tower_poses((), FORT_ROSS_TOWERS), FORT_ROSS_TOWERS)
         partial = (FORT_ROSS_TOWERS[0],)
