@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 from .models import GeoEstimate, Pixel
 
@@ -42,11 +42,22 @@ def _rotate_ned(vector: tuple[float, float, float], roll: float, pitch: float, y
     )
 
 
-def estimate_flat_water(pixel: Pixel, intrinsics: CameraIntrinsics, pose: CameraPose) -> GeoEstimate:
+def estimate_flat_water(
+    pixel: Pixel,
+    intrinsics: CameraIntrinsics,
+    pose: CameraPose,
+    timestamp: datetime | None = None,
+    *,
+    observation_timestamp: datetime | None = None,
+) -> GeoEstimate:
+    """Intersect a camera ray with world ``z=0`` and retain observation time."""
     if intrinsics.fx_px <= 0 or intrinsics.fy_px <= 0:
         raise ValueError("focal lengths must be positive")
-    if pose.altitude_m <= 0:
-        raise ValueError("camera must be above the water surface")
+    altitude_m = pose.altitude_m
+    if altitude_m <= 0:
+        raise ValueError("camera altitude above water must be positive")
+    if timestamp is not None and observation_timestamp is not None:
+        raise ValueError("provide only one observation timestamp")
 
     optical_x = (pixel.x - intrinsics.cx_px) / intrinsics.fx_px
     optical_y = (pixel.y - intrinsics.cy_px) / intrinsics.fy_px
@@ -55,7 +66,7 @@ def estimate_flat_water(pixel: Pixel, intrinsics: CameraIntrinsics, pose: Camera
     if ray_ned[2] <= 1e-6:
         raise ValueError("pixel ray does not intersect the water in front of the camera")
 
-    scale = pose.altitude_m / ray_ned[2]
+    scale = altitude_m / ray_ned[2]
     north_m, east_m = ray_ned[0] * scale, ray_ned[1] * scale
     earth_radius_m = 6_378_137.0
     latitude = pose.latitude + math.degrees(north_m / earth_radius_m)
@@ -64,7 +75,7 @@ def estimate_flat_water(pixel: Pixel, intrinsics: CameraIntrinsics, pose: Camera
         raise ValueError("longitude is undefined near the poles")
     longitude = pose.longitude + math.degrees(east_m / (earth_radius_m * cos_latitude))
 
-    range_m = math.sqrt(north_m * north_m + east_m * east_m + pose.altitude_m**2)
+    range_m = math.sqrt(north_m * north_m + east_m * east_m + altitude_m**2)
     pixel_angle = max(
         intrinsics.pixel_uncertainty_px / intrinsics.fx_px,
         intrinsics.pixel_uncertainty_px / intrinsics.fy_px,
@@ -74,5 +85,5 @@ def estimate_flat_water(pixel: Pixel, intrinsics: CameraIntrinsics, pose: Camera
         + (range_m * pose.attitude_uncertainty_rad) ** 2
         + (range_m * pixel_angle) ** 2
     )
-    return GeoEstimate(latitude, longitude, uncertainty, datetime.now(timezone.utc))
-
+    observed_at = observation_timestamp or timestamp
+    return GeoEstimate(latitude, longitude, uncertainty, observed_at) if observed_at else GeoEstimate(latitude, longitude, uncertainty)

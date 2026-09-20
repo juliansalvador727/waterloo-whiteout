@@ -23,10 +23,14 @@ class GeolocationTests(unittest.TestCase):
         self.assertGreater(estimate.longitude, -80.0)
 
     def test_invalid_altitude(self) -> None:
-        with self.assertRaises(ValueError):
-            estimate_flat_water(Pixel(500.0, 400.0), self.intrinsics, CameraPose(43, -80, 0))
+        for altitude in (0, -100):
+            with self.subTest(altitude=altitude), self.assertRaises(ValueError):
+                estimate_flat_water(
+                    Pixel(500.0, 400.0),
+                    self.intrinsics,
+                    CameraPose(43, -80, altitude),
+                )
 
 
 if __name__ == "__main__":
     unittest.main()
-

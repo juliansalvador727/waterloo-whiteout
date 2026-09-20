@@ -14,6 +14,8 @@ import re
 import shlex
 from typing import TYPE_CHECKING, ClassVar, Sequence
 
+from .tower import TowerCalibration, TowerOrientation
+
 if TYPE_CHECKING:
     from .control import CopterController, PlaneController, TowerController
     from .mavproxy import MavProxySession

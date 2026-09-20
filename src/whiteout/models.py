@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -46,6 +47,10 @@ class Detection:
     metadata: Mapping[str, Any] = field(default_factory=dict)
     bbox: BoundingBox | None = None
 
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.confidence) or not 0 <= self.confidence <= 1:
+            raise ValueError("detection confidence must be finite and between 0 and 1")
+
 
 @dataclass(frozen=True, slots=True)
 class GeoEstimate:
@@ -86,6 +91,45 @@ class Track:
     velocity_east_mps: float
     uncertainty_m: float
     last_update: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True, slots=True)
+class TrackEstimate:
+    """Operational track state, including confirmation and submission fitness."""
+
+    track: Track
+    confirmed: bool = False
+    provisional: bool = True
+    submit_eligible: bool = True
+    source: str | None = None
+
+    @property
+    def uncertainty_95_m(self) -> float:
+        return 1.959963984540054 * self.track.uncertainty_m
+
+    @property
+    def latitude(self) -> float:
+        return self.track.latitude
+
+    @property
+    def longitude(self) -> float:
+        return self.track.longitude
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.track.last_update
+
+
+@dataclass(frozen=True, slots=True)
+class ControlIntent:
+    """An inert request for an executor, never an actuator command by itself."""
+
+    asset: str
+    action: str
+    target: GeoEstimate | None = None
+    reason: str = ""
+    pan_deg: float | None = None
+    tilt_deg: float | None = None
 
 
 class SearchMode(str, Enum):

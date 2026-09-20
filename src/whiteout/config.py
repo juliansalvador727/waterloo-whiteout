@@ -44,6 +44,21 @@ class LoggingConfig:
     jsonl_path: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CourseBounds:
+    south: float
+    west: float
+    north: float
+    east: float
+
+    def __post_init__(self) -> None:
+        if self.south > self.north or self.west > self.east:
+            raise ConfigError("course bounds must be ordered south, west, north, east")
+
+    def contains(self, latitude: float, longitude: float) -> bool:
+        return self.south <= latitude <= self.north and self.west <= longitude <= self.east
+
+
 def _default_cameras() -> tuple[CameraConfig, ...]:
     return (
         CameraConfig("quadcopter", 8600, width=640, height=480, hfov_deg=114.6, vfov_deg=99.4),
@@ -72,6 +87,7 @@ class AppConfig:
     mavlink: tuple[MavlinkConfig, ...] = field(default_factory=_default_mavlink)
     track_api: TrackApiConfig = field(default_factory=TrackApiConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    course_bounds: CourseBounds | None = None
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -133,6 +149,19 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
     )
     api_data = data.get("track_api", {})
     log_data = data.get("logging", {})
+    bounds_data = data.get("course_bounds")
+    course_bounds = None
+    if bounds_data is not None:
+        if isinstance(bounds_data, (list, tuple)) and len(bounds_data) == 4:
+            west, south, east, north = (float(value) for value in bounds_data)
+        elif isinstance(bounds_data, Mapping):
+            south = float(bounds_data.get("south", bounds_data.get("min_latitude")))
+            west = float(bounds_data.get("west", bounds_data.get("min_longitude")))
+            north = float(bounds_data.get("north", bounds_data.get("max_latitude")))
+            east = float(bounds_data.get("east", bounds_data.get("max_longitude")))
+        else:
+            raise ConfigError("course_bounds must be a mapping or [west, south, east, north]")
+        course_bounds = CourseBounds(south, west, north, east)
     config = AppConfig(
         sim_host=str(data.get("sim_host", "127.0.0.1")),
         placement_owner=str(data.get("placement_owner", "unassigned")),
@@ -145,6 +174,7 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
             include_speed=bool(api_data.get("include_speed", False)),
         ),
         logging=LoggingConfig(jsonl_path=log_data.get("jsonl_path")),
+        course_bounds=course_bounds,
     )
     _validate(config)
     return config
