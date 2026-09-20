@@ -18,6 +18,26 @@ tower_poses:
     longitude: -94.88346035301377
     camera_world_z_m: 6.62
 
+# Per-tower software limits and slew rates. Commands are clamped to these
+# bounds and approached in small steps at command_hz.
+tower_motion:
+  tower-1:
+    pan_min_deg: -135
+    pan_max_deg: 135
+    tilt_min_deg: -15
+    tilt_max_deg: 30
+    pan_rate_deg_s: 24
+    tilt_rate_deg_s: 12
+    command_hz: 10
+  tower-2:
+    pan_min_deg: -135
+    pan_max_deg: 135
+    tilt_min_deg: -15
+    tilt_max_deg: 30
+    pan_rate_deg_s: 24
+    tilt_rate_deg_s: 12
+    command_hz: 10
+
 cameras:
   - name: quadcopter
     port: 8600

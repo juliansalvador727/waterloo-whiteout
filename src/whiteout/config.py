@@ -64,6 +64,18 @@ class CoordinatorConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TowerMotionConfig:
+    name: str
+    pan_min_deg: float = -135.0
+    pan_max_deg: float = 135.0
+    tilt_min_deg: float = -15.0
+    tilt_max_deg: float = 30.0
+    pan_rate_deg_s: float = 24.0
+    tilt_rate_deg_s: float = 12.0
+    command_hz: float = 10.0
+
+
+@dataclass(frozen=True, slots=True)
 class CourseBounds:
     south: float
     west: float
@@ -98,6 +110,13 @@ def _default_mavlink() -> tuple[MavlinkConfig, ...]:
     )
 
 
+def _default_tower_motion() -> tuple[TowerMotionConfig, ...]:
+    return (
+        TowerMotionConfig("tower-1"),
+        TowerMotionConfig("tower-2"),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     sim_host: str = "127.0.0.1"
@@ -109,6 +128,7 @@ class AppConfig:
     course_bounds: CourseBounds | None = None
     coordinator: CoordinatorConfig = field(default_factory=CoordinatorConfig)
     tower_poses: tuple[TowerWorldPose, ...] = ()
+    tower_motion: tuple[TowerMotionConfig, ...] = field(default_factory=_default_tower_motion)
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -172,6 +192,29 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
     log_data = data.get("logging", {})
     coordinator_data = data.get("coordinator", {})
     tower_poses_data = data.get("tower_poses", ())
+    tower_motion_data = data.get("tower_motion", {})
+    if not isinstance(tower_motion_data, Mapping):
+        raise ConfigError("tower_motion must be a mapping keyed by tower name")
+    unknown_towers = set(tower_motion_data) - {"tower-1", "tower-2"}
+    if unknown_towers:
+        raise ConfigError(f"tower_motion contains unknown towers: {sorted(unknown_towers)}")
+    default_motion = {item.name: item for item in _default_tower_motion()}
+    tower_motion: list[TowerMotionConfig] = []
+    for name in ("tower-1", "tower-2"):
+        item = tower_motion_data.get(name, {})
+        if not isinstance(item, Mapping):
+            raise ConfigError(f"tower_motion.{name} must be a mapping")
+        defaults = default_motion[name]
+        tower_motion.append(TowerMotionConfig(
+            name=name,
+            pan_min_deg=float(item.get("pan_min_deg", defaults.pan_min_deg)),
+            pan_max_deg=float(item.get("pan_max_deg", defaults.pan_max_deg)),
+            tilt_min_deg=float(item.get("tilt_min_deg", defaults.tilt_min_deg)),
+            tilt_max_deg=float(item.get("tilt_max_deg", defaults.tilt_max_deg)),
+            pan_rate_deg_s=float(item.get("pan_rate_deg_s", defaults.pan_rate_deg_s)),
+            tilt_rate_deg_s=float(item.get("tilt_rate_deg_s", defaults.tilt_rate_deg_s)),
+            command_hz=float(item.get("command_hz", defaults.command_hz)),
+        ))
     bounds_data = data.get("course_bounds")
     course_bounds = None
     if bounds_data is not None:
@@ -222,6 +265,7 @@ def config_from_mapping(data: Mapping[str, Any]) -> AppConfig:
             )
             for item in tower_poses_data
         ),
+        tower_motion=tuple(tower_motion),
     )
     _validate(config)
     return config
@@ -257,6 +301,24 @@ def _validate(config: AppConfig) -> None:
         raise ConfigError("coordinator dashboard port must be between 1 and 65535")
     if config.tower_poses and {pose.name for pose in config.tower_poses} != {"tower-1", "tower-2"}:
         raise ConfigError("tower_poses must contain exactly tower-1 and tower-2")
+    if (
+        len(config.tower_motion) != 2
+        or {item.name for item in config.tower_motion} != {"tower-1", "tower-2"}
+    ):
+        raise ConfigError("tower_motion must contain exactly tower-1 and tower-2")
+    for item in config.tower_motion:
+        if not -144.0 <= item.pan_min_deg < item.pan_max_deg <= 144.0:
+            raise ConfigError(
+                f"tower_motion.{item.name} pan limits must be ordered within [-144, 144]"
+            )
+        if not -22.5 <= item.tilt_min_deg < item.tilt_max_deg <= 37.5:
+            raise ConfigError(
+                f"tower_motion.{item.name} tilt limits must be ordered within [-22.5, 37.5]"
+            )
+        if not item.tilt_min_deg <= 7.5 <= item.tilt_max_deg:
+            raise ConfigError(f"tower_motion.{item.name} tilt limits must include 7.5 degrees")
+        if item.pan_rate_deg_s <= 0 or item.tilt_rate_deg_s <= 0 or item.command_hz <= 0:
+            raise ConfigError(f"tower_motion.{item.name} rates and command_hz must be positive")
 
 
 def load_config(path: str | Path, environ: Mapping[str, str] | None = None) -> AppConfig:

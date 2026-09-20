@@ -10,7 +10,7 @@ from .mavproxy import MavProxyNotRunning, MavProxySession, MavProxyUnavailable
 from .mission import MissionValidationError, MissionWaypoint, SearchMission
 from .observation import ObservationMetadata, SynchronizationStatus
 from .camera import CameraModel, FIXED_WING_CAMERA, QUAD_CAMERA, TOWER_CAMERA
-from .config import CoordinatorConfig, CourseBounds
+from .config import CoordinatorConfig, CourseBounds, TowerMotionConfig
 from .execution import (
     Executor,
     LiveExecutor,
@@ -86,6 +86,7 @@ __all__ = [
     "ControlIntent",
     "CoordinatorConfig",
     "CourseBounds",
+    "TowerMotionConfig",
     "Executor",
     "FIXED_WING_CAMERA",
     "FIXED_WING_CAMERA_DOWN_DEG",

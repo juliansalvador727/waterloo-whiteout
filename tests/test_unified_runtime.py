@@ -5,12 +5,13 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 from whiteout.camera import CameraFrame
-from whiteout.config import AppConfig, CourseBounds, TrackApiConfig
+from whiteout.config import AppConfig, CourseBounds, TowerMotionConfig, TrackApiConfig
 from whiteout.coordinator_cli import validate_live_config
 from whiteout.models import ControlIntent, Detection, GeoEstimate, Pixel, SearchMode, Telemetry
 from whiteout.objects import Copter
 from whiteout.runtime import (
     RateLimitedExecutor,
+    ManagedTower,
     TelemetryBuffer,
     UnifiedCoordinatorRuntime,
     _course_scan_pans,
@@ -81,6 +82,45 @@ class UnifiedRuntimeTests(unittest.TestCase):
             self.assertTrue(pans)
             self.assertTrue(all(-144 <= pan <= 144 for pan in pans))
             self.assertTrue(all(right - left <= 48.000001 for left, right in zip(pans, pans[1:])))
+
+    def test_tower_motion_clamps_targets_and_slews_smoothly(self) -> None:
+        controller = Mock()
+        tower = ManagedTower(
+            controller,
+            TowerMotionConfig(
+                "tower-1",
+                pan_min_deg=-30,
+                pan_max_deg=30,
+                tilt_min_deg=-10,
+                tilt_max_deg=20,
+                pan_rate_deg_s=10,
+                tilt_rate_deg_s=5,
+                command_hz=10,
+            ),
+        )
+        tower.initialize_center(now_s=0.0)
+        controller.reset_mock()
+        tower.pan(90)
+        tower.tilt(-30)
+
+        self.assertTrue(tower.advance(0.1))
+        controller.pan.assert_called_once_with(1.0)
+        controller.tilt.assert_called_once_with(7.0)
+        self.assertEqual(tower.target_pan_deg, 30)
+        self.assertEqual(tower.target_tilt_deg, -10)
+        self.assertFalse(tower.at_target())
+
+        tower.advance(10.0)
+        self.assertEqual(tower.commanded_pan_deg, 30)
+        self.assertEqual(tower.commanded_tilt_deg, -10)
+        self.assertTrue(tower.at_target())
+        self.assertEqual(tower.target_reached_at(), 10.0)
+
+    def test_tower_scan_respects_configured_soft_pan_limits(self) -> None:
+        pans = _course_scan_pans(FORT_ROSS_TOWERS[0], None, 0.20, -100, 80)
+        self.assertTrue(all(-100 <= pan <= 80 for pan in pans))
+        self.assertEqual(pans[0], -100)
+        self.assertEqual(pans[-1], 80)
 
     def test_empty_or_partial_metadata_uses_explicit_tower_poses(self) -> None:
         self.assertIs(_resolve_tower_poses((), FORT_ROSS_TOWERS), FORT_ROSS_TOWERS)

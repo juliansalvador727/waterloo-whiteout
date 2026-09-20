@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from whiteout.config import ConfigError, load_config, substitute_environment
+from whiteout.config import ConfigError, config_from_mapping, load_config, substitute_environment
 
 
 class ConfigTests(unittest.TestCase):
@@ -38,6 +38,9 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(config.track_api.allow_submission)
         self.assertEqual(config.track_api.name, "Sierra One")
         self.assertFalse(config.track_api.include_speed)
+        self.assertEqual([item.name for item in config.tower_motion], ["tower-1", "tower-2"])
+        self.assertEqual(config.tower_motion[0].pan_min_deg, -135.0)
+        self.assertEqual(config.tower_motion[0].pan_rate_deg_s, 24.0)
 
     def test_substitution_default_and_missing_value(self) -> None:
         self.assertEqual(substitute_environment("${MISSING:-fallback}", {}), "fallback")
@@ -50,6 +53,22 @@ class ConfigTests(unittest.TestCase):
             path.write_text(json.dumps({"track_api": {"allow_submission": True}}), encoding="utf-8")
             with self.assertRaises(ConfigError):
                 load_config(path, {})
+
+    def test_per_tower_motion_config_and_validation(self) -> None:
+        config = config_from_mapping({
+            "tower_motion": {
+                "tower-1": {"pan_min_deg": -90, "pan_rate_deg_s": 8},
+                "tower-2": {"tilt_max_deg": 20, "command_hz": 5},
+            }
+        })
+        self.assertEqual(config.tower_motion[0].pan_min_deg, -90)
+        self.assertEqual(config.tower_motion[0].pan_rate_deg_s, 8)
+        self.assertEqual(config.tower_motion[1].tilt_max_deg, 20)
+        self.assertEqual(config.tower_motion[1].command_hz, 5)
+        with self.assertRaisesRegex(ConfigError, "pan limits"):
+            config_from_mapping({
+                "tower_motion": {"tower-1": {"pan_min_deg": -150}}
+            })
 
 
 if __name__ == "__main__":

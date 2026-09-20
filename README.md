@@ -103,6 +103,12 @@ dashboard at `http://127.0.0.1:8070`, uploads both bundled missions, and prompts
 takeoff and AUTO transition. `quit` or Ctrl+C stops new submissions and requests RTL for both
 aircraft. The fixed-wing RTL command does not imply that it has landed.
 
+Tower motion is configured separately for each unit under `tower_motion`. Pan and tilt requests
+are clamped to the configured soft limits, then slewed at `pan_rate_deg_s` and
+`tilt_rate_deg_s` using `command_hz` updates. A search scan holds its one-second dwell only after
+the tower reaches the requested pose. The defaults keep pan within -135 to 135 degrees, tilt
+within -15 to 30 degrees, and move at 24 degrees/second pan and 12 degrees/second tilt.
+
 MJPEG frame timestamps are assigned when WHITEOUT receives each complete JPEG. They are used
 for the 250 ms telemetry match, but they are not guaranteed simulator exposure timestamps.
 The current Fort Ross camera transforms include the simulator's 20-degree

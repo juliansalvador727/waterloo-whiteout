@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from .camera import CameraFrame, CameraModel, MjpegCamera
-from .config import AppConfig, CameraConfig
+from .config import AppConfig, CameraConfig, TowerMotionConfig
 from .control import CopterController, CopterMode, PlaneController, TowerController
 from .coordinator import CoordinationResult, Coordinator
 from .dashboard.app import DashboardRuntime, create_app
@@ -85,24 +85,96 @@ class TelemetryBuffer:
 @dataclass(slots=True)
 class ManagedTower:
     controller: TowerController
+    motion: TowerMotionConfig
     calibration: TowerCalibration = field(default_factory=TowerCalibration)
     commanded_pan_deg: float = 0.0
     commanded_tilt_deg: float = 7.5
+    target_pan_deg: float = 0.0
+    target_tilt_deg: float = 7.5
     commanded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    _last_advance_s: float | None = None
+    _last_command_s: float | None = None
+    _reached_at_s: float | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def pan(self, angle_deg: float) -> None:
-        self.controller.pan(angle_deg)
-        self.commanded_pan_deg = float(angle_deg)
-        self.commanded_at = datetime.now(timezone.utc)
+        with self._lock:
+            target = min(self.motion.pan_max_deg, max(self.motion.pan_min_deg, float(angle_deg)))
+            if not math.isclose(target, self.target_pan_deg, abs_tol=1e-9):
+                self.target_pan_deg = target
+                self._reached_at_s = None
 
     def tilt(self, angle_deg: float) -> None:
-        self.controller.tilt(angle_deg)
-        self.commanded_tilt_deg = float(angle_deg)
-        self.commanded_at = datetime.now(timezone.utc)
+        with self._lock:
+            target = min(self.motion.tilt_max_deg, max(self.motion.tilt_min_deg, float(angle_deg)))
+            if not math.isclose(target, self.target_tilt_deg, abs_tol=1e-9):
+                self.target_tilt_deg = target
+                self._reached_at_s = None
 
-    def center(self) -> None:
-        self.pan(0.0)
-        self.tilt(7.5)
+    def initialize_center(self, now_s: float | None = None) -> None:
+        now = time.monotonic() if now_s is None else now_s
+        with self._lock:
+            self.controller.pan(0.0)
+            self.controller.tilt(7.5)
+            self.commanded_pan_deg = self.target_pan_deg = 0.0
+            self.commanded_tilt_deg = self.target_tilt_deg = 7.5
+            self.commanded_at = datetime.now(timezone.utc)
+            self._last_advance_s = now
+            self._last_command_s = now
+            self._reached_at_s = now
+
+    def advance(self, now_s: float | None = None) -> bool:
+        now = time.monotonic() if now_s is None else now_s
+        with self._lock:
+            if self._last_advance_s is None:
+                self._last_advance_s = now
+                return False
+            command_interval = 1.0 / self.motion.command_hz
+            if self._last_command_s is not None and now - self._last_command_s < command_interval:
+                return False
+            elapsed = max(0.0, now - self._last_advance_s)
+            self._last_advance_s = now
+            next_pan = _move_toward(
+                self.commanded_pan_deg,
+                self.target_pan_deg,
+                self.motion.pan_rate_deg_s * elapsed,
+            )
+            next_tilt = _move_toward(
+                self.commanded_tilt_deg,
+                self.target_tilt_deg,
+                self.motion.tilt_rate_deg_s * elapsed,
+            )
+            changed = False
+            if not math.isclose(next_pan, self.commanded_pan_deg, abs_tol=1e-9):
+                self.controller.pan(next_pan)
+                self.commanded_pan_deg = next_pan
+                changed = True
+            if not math.isclose(next_tilt, self.commanded_tilt_deg, abs_tol=1e-9):
+                self.controller.tilt(next_tilt)
+                self.commanded_tilt_deg = next_tilt
+                changed = True
+            if changed:
+                self.commanded_at = datetime.now(timezone.utc)
+                self._last_command_s = now
+            if self._at_target_unlocked():
+                self._reached_at_s = self._reached_at_s or now
+            else:
+                self._reached_at_s = None
+            return changed
+
+    def at_target(self) -> bool:
+        with self._lock:
+            return self._at_target_unlocked()
+
+    def target_reached_at(self) -> float | None:
+        with self._lock:
+            return self._reached_at_s
+
+    def _at_target_unlocked(self) -> bool:
+        return (
+            math.isclose(self.commanded_pan_deg, self.target_pan_deg, abs_tol=1e-6)
+            and math.isclose(self.commanded_tilt_deg, self.target_tilt_deg, abs_tol=1e-6)
+        )
 
     def orientation(self, telemetry: Telemetry) -> TowerOrientation | None:
         if telemetry.servo_1_pwm is None or telemetry.servo_2_pwm is None:
@@ -121,17 +193,28 @@ class ManagedTower:
         )
         angular_rate = max((abs(value) for value in rates), default=math.inf)
         compass = math.degrees(telemetry.yaw_rad) % 360.0 if telemetry.yaw_rad is not None else None
+        with self._lock:
+            commanded_pan = self.commanded_pan_deg
+            commanded_tilt = self.commanded_tilt_deg
+            commanded_at = self.commanded_at
         return TowerOrientation(
             pan,
             tilt,
             telemetry.timestamp,
-            commanded_pan_deg=self.commanded_pan_deg,
-            commanded_tilt_deg=self.commanded_tilt_deg,
+            commanded_pan_deg=commanded_pan,
+            commanded_tilt_deg=commanded_tilt,
             compass_heading_deg=compass,
             calibration=self.calibration,
             angular_rate_dps=angular_rate,
-            settled_since=self.commanded_at + timedelta(seconds=0.5),
+            settled_since=commanded_at + timedelta(seconds=0.5),
         )
+
+
+def _move_toward(current: float, target: float, maximum_delta: float) -> float:
+    delta = target - current
+    if abs(delta) <= maximum_delta:
+        return target
+    return current + math.copysign(maximum_delta, delta)
 
 
 class RateLimitedExecutor:
@@ -264,6 +347,8 @@ class UnifiedCoordinatorRuntime:
         self.store = MissionStateStore(recorder=recorder)
         self.telemetry = {name: TelemetryBuffer() for name in ASSETS}
         self._stop = threading.Event()
+        self._tower_motion_enabled = threading.Event()
+        self._tower_motion_enabled.set()
         self._threads: list[threading.Thread] = []
         self._detected_queue: queue.Queue[tuple[CameraFrame, tuple]] = queue.Queue(maxsize=len(ASSETS) * 2)
         self._pending_frames: dict[str, CameraFrame] = {}
@@ -276,11 +361,12 @@ class UnifiedCoordinatorRuntime:
         self._aircraft_launched: set[str] = set()
         self._aborted: set[str] = set()
         self._dashboard_server: object | None = None
-        self._scan_index = {"tower-1": 0, "tower-2": -1}
+        self._scan_index = {"tower-1": -1, "tower-2": 0}
         self._scan_at = {"tower-1": 0.0, "tower-2": 0.0}
 
+        tower_motion = {item.name: item for item in config.tower_motion}
         self.towers = {
-            name: ManagedTower(controllers[name])  # type: ignore[arg-type]
+            name: ManagedTower(controllers[name], tower_motion[name])  # type: ignore[arg-type]
             for name in ("tower-1", "tower-2")
         }
         actuator = SimulatorActuator(
@@ -407,14 +493,14 @@ class UnifiedCoordinatorRuntime:
         if not self.operator_session.active:
             raise PermissionError("tower calibration requires an active operator session")
         for tower in self.towers.values():
-            tower.center()
+            tower.initialize_center()
         deadline = time.monotonic() + timeout_s
         samples: dict[str, list[float]] = {name: [] for name in self.towers}
         stable_since: dict[str, float | None] = {name: None for name in self.towers}
         while time.monotonic() < deadline and any(len(value) < 15 for value in samples.values()):
             for name, tower in self.towers.items():
                 telemetry = self.latest_telemetry(name)
-                if telemetry is None or telemetry.yaw_rad is None:
+                if telemetry is None or telemetry.yaw_rad is None or not tower.at_target():
                     continue
                 rate = abs(telemetry.yaw_rate_dps) if telemetry.yaw_rate_dps is not None else math.inf
                 if rate >= 1.0:
@@ -501,6 +587,7 @@ class UnifiedCoordinatorRuntime:
         return buffer.latest() if buffer is not None else None
 
     def close(self, *, request_rtl: bool = True) -> None:
+        self._tower_motion_enabled.clear()
         self.operator_session = OperatorSession(self.operator_session.operator, active=False)
         self.executor.delegate.operator_session = self.operator_session
         self.track_sink.delegate.operator_session = self.operator_session
@@ -551,6 +638,7 @@ class UnifiedCoordinatorRuntime:
 
     def _start_workers(self) -> None:
         self.track_sink.start()
+        self._thread(self._tower_motion_worker, "tower-motion")
         self._thread(self._inference_worker, "detector")
         for item in self.config.cameras:
             self._thread(self._camera_worker, f"camera-{item.name}", item)
@@ -638,6 +726,19 @@ class UnifiedCoordinatorRuntime:
                 self.store.update_telemetry(update)
             time.sleep(0.02)
 
+    def _tower_motion_worker(self) -> None:
+        while not self._stop.is_set():
+            if not self._tower_motion_enabled.is_set():
+                time.sleep(0.02)
+                continue
+            now = time.monotonic()
+            for tower in self.towers.values():
+                try:
+                    tower.advance(now)
+                except Exception as exc:
+                    self.output(f"tower movement failed for {tower.motion.name}: {exc}")
+            time.sleep(0.02)
+
     @staticmethod
     def _replace_queue(target: queue.Queue, item: object) -> None:
         try:
@@ -704,12 +805,20 @@ class UnifiedCoordinatorRuntime:
         if self.pipeline.coordinator.mode is not SearchMode.SEARCH:
             return
         for name, tower in self.towers.items():
-            if name not in self.executor.enabled_assets or now - self._scan_at[name] < self.config.coordinator.tower_dwell_s:
+            reached_at = tower.target_reached_at()
+            if (
+                name not in self.executor.enabled_assets
+                or reached_at is None
+                or now - max(reached_at, self._scan_at[name])
+                < self.config.coordinator.tower_dwell_s
+            ):
                 continue
             pose = next(item for item in self.tower_poses if item.name == name)
             pans = _course_scan_pans(
                 pose, self.config.course_bounds,
                 self.config.coordinator.tower_horizontal_overlap,
+                tower.motion.pan_min_deg,
+                tower.motion.pan_max_deg,
             )
             direction = 1 if name == "tower-1" else -1
             self._scan_index[name] = (self._scan_index[name] + direction) % len(pans)
@@ -718,7 +827,7 @@ class UnifiedCoordinatorRuntime:
             self._scan_at[name] = now
             self.store.update_asset_activity(
                 name, AssetActivity.PANNING, reason="complementary search scan",
-                pan_deg=tower.commanded_pan_deg, tilt_deg=tower.commanded_tilt_deg,
+                pan_deg=tower.target_pan_deg, tilt_deg=tower.target_tilt_deg,
             )
 
     def _start_dashboard(self) -> None:
@@ -784,11 +893,15 @@ def _course_scan_pans(
     tower: TowerWorldPose,
     bounds: object,
     overlap: float,
+    pan_min_deg: float = -144.0,
+    pan_max_deg: float = 144.0,
 ) -> list[float]:
     """Return reachable tower pans spanning the configured geographic course."""
     calibration = TowerCalibration()
     if bounds is None:
-        return [-144.0, -96.0, -48.0, 0.0, 48.0, 96.0, 144.0]
+        values = [-144.0, -96.0, -48.0, 0.0, 48.0, 96.0, 144.0]
+        clipped = [min(pan_max_deg, max(pan_min_deg, value)) for value in values]
+        return list(dict.fromkeys(clipped))
     corners = (
         (bounds.south, bounds.west),  # type: ignore[attr-defined]
         (bounds.south, bounds.east),  # type: ignore[attr-defined]
@@ -800,11 +913,11 @@ def _course_scan_pans(
     centre = _bearing(tower.latitude, tower.longitude, centre_lat, centre_lon)
     headings = [centre + wrap_pan(_bearing(tower.latitude, tower.longitude, lat, lon) - centre) for lat, lon in corners]
     pans = sorted(calibration.target_pan(heading) for heading in headings)
-    lower = max(calibration.pan_min_deg, min(pans))
-    upper = min(calibration.pan_max_deg, max(pans))
+    lower = max(calibration.pan_min_deg, pan_min_deg, min(pans))
+    upper = min(calibration.pan_max_deg, pan_max_deg, max(pans))
     if lower > upper:
         candidate = calibration.target_pan(centre)
-        return [min(calibration.pan_max_deg, max(calibration.pan_min_deg, candidate))]
+        return [min(pan_max_deg, max(pan_min_deg, candidate))]
     step, _ = tower_scan_overlap_steps(overlap, 0.20)
     result = [lower]
     while result[-1] + step < upper:
