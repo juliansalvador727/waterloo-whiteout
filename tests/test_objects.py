@@ -50,11 +50,11 @@ class ObjectTests(unittest.TestCase):
         tower = Tower.two()
         self.assertEqual(
             str(tower.pan(1200)),
-            "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0",
+            "long MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0",
         )
         self.assertEqual(
             str(tower.tilt(1700)),
-            "cmdlong MAV_CMD_DO_SET_SERVO 2 1700 0 0 0 0 0",
+            "long MAV_CMD_DO_SET_SERVO 2 1700 0 0 0 0 0",
         )
         with self.assertRaises(UnsupportedCommand):
             tower.arm()

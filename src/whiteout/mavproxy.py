@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import TYPE_CHECKING, Iterable, Sequence
@@ -53,6 +54,7 @@ class MavProxySession:
         self._output_condition = threading.Condition()
         self._output_lines: list[str] = []
         self._reader_thread: threading.Thread | None = None
+        self._working_directory: tempfile.TemporaryDirectory[str] | None = None
 
     def _validate_arguments(self) -> None:
         for argument in self.extra_arguments:
@@ -63,12 +65,14 @@ class MavProxySession:
 
     @property
     def arguments(self) -> tuple[str, ...]:
-        # Managed sessions do not need MAVProxy's GUI console or telemetry log
-        # files. Keep only the modules used by the typed control surface.
+        # MAVProxy does not load its optional GUI console unless ``--console``
+        # is supplied.  Older/current releases do not provide a corresponding
+        # ``--no-console`` flag, so omitting ``--console`` is the portable
+        # headless setting.  Keep only the modules used by the typed control
+        # surface and disable state/log files.
         arguments = [
             self.executable,
             f"--master={self.master}",
-            "--no-console",
             "--no-state",
             "--default-modules=wp,param,arm,mode,rc,misc,cmdlong,battery",
             *self.extra_arguments,
@@ -115,15 +119,27 @@ class MavProxySession:
             self._output_lines.clear()
         launcher = self._resolve_launcher()
         arguments = (*launcher, *self.arguments[1:])
-        self._process = subprocess.Popen(
-            arguments,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
+        # MAVProxy and some modules create mav.tlog, mav.tlog.raw and parameter
+        # snapshots even with --no-state.  Isolate those runtime artifacts from
+        # the caller's repository and remove them when the session closes.
+        self._working_directory = tempfile.TemporaryDirectory(
+            prefix="whiteout-mavproxy-"
         )
+        try:
+            self._process = subprocess.Popen(
+                arguments,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                cwd=self._working_directory.name,
+            )
+        except Exception:
+            self._working_directory.cleanup()
+            self._working_directory = None
+            raise
         output_stream = self._process.stdout
         if output_stream is not None:
             self._reader_thread = threading.Thread(
@@ -208,6 +224,9 @@ class MavProxySession:
                 self._reader_thread.join(timeout=min(timeout, 1.0))
                 self._reader_thread = None
             self._process = None
+            if self._working_directory is not None:
+                self._working_directory.cleanup()
+                self._working_directory = None
 
     def __enter__(self) -> MavProxySession:
         return self.start()

@@ -1,0 +1,5 @@
+name,x,y,yaw_deg,view_offset_deg
+west-edge,600.0,280.0,0.0,-20
+left-centre,550.0,300.0,90.0,-7
+right-centre,500.0,280.0,180.0,7
+east-edge,450.0,300.0,270.0,20

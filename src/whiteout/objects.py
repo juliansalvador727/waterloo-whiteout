@@ -329,7 +329,7 @@ class Tower(RepositoryObject):
         if servo_number not in (1, 2):
             raise ValueError("tower servo must be 1 (pan) or 2 (tilt)")
         return MavProxyCommand(
-            "cmdlong",
+            "long",
             (
                 "MAV_CMD_DO_SET_SERVO",
                 str(servo_number),

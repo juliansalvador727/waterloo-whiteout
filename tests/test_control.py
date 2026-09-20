@@ -10,6 +10,7 @@ from whiteout.control import (
     CopterMode,
     MavProxyConnectionError,
     PlaneMode,
+    TowerCommandError,
     TowerController,
 )
 from whiteout.objects import Copter, Plane, Tower
@@ -168,10 +169,33 @@ class TypedControllerTests(unittest.TestCase):
         self.assertEqual(
             [str(call.args[0]) for call in session.send.call_args_list],
             [
-                "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0",
-                "cmdlong MAV_CMD_DO_SET_SERVO 2 1700 0 0 0 0 0",
+                "long MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0",
+                "long MAV_CMD_DO_SET_SERVO 2 1700 0 0 0 0 0",
             ],
         )
+        self.assertEqual(
+            session.wait_for_output.call_args_list[-2:],
+            [
+                unittest.mock.call(
+                    "Got COMMAND_ACK: DO_SET_SERVO: ACCEPTED",
+                    timeout=3.0,
+                    start=len("online system 1"),
+                ),
+                unittest.mock.call(
+                    "Got COMMAND_ACK: DO_SET_SERVO: ACCEPTED",
+                    timeout=3.0,
+                    start=len("online system 1"),
+                ),
+            ],
+        )
+
+    def test_tower_command_requires_accepted_ack(self) -> None:
+        controller, session = self.controller_for(Tower.one())
+        session.wait_for_output.side_effect = (True, False)
+        controller.start()
+
+        with self.assertRaisesRegex(TowerCommandError, "did not accept"):
+            controller.pan(1600, timeout_s=0.1)
 
     def test_controller_fails_closed_when_heartbeat_never_arrives(self) -> None:
         session = MagicMock()

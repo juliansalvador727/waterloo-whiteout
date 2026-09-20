@@ -122,7 +122,7 @@ with Tower.one("10.99.0.1").controller() as tower:
     tower.tilt(1700)
 ```
 
-`CopterMode` and `PlaneMode` are separate enums, so modes cannot be mixed between vehicle types. Towers do not support arming. Pan and tilt use MAVProxy's built-in `cmdlong` command with `MAV_CMD_DO_SET_SERVO`, without an optional servo module. Unsupported operations, invalid modes, and PWM values outside 1000 to 2000 are rejected before transmission.
+`CopterMode` and `PlaneMode` are separate enums, so modes cannot be mixed between vehicle types. Towers do not support arming. Pan and tilt use the `long` console command supplied by MAVProxy's built-in `cmdlong` module with `MAV_CMD_DO_SET_SERVO`, without an optional servo module. Unsupported operations, invalid modes, and PWM values outside 1000 to 2000 are rejected before transmission.
 
 Low-level `MavProxyCommand` builders remain available for unusual cases. Building a command does not execute it. Transmission only occurs through a running `MavProxySession` or typed controller.
 
@@ -205,6 +205,29 @@ python scripts/record_cameras.py --config config.yaml --camera tower-2 --frames 
 ```
 
 Check line of sight, target scale, overlapping water coverage, and camera orientation. A correctly placed tower can still show only sky or terrain if pan or tilt is unsuitable. Record the intrinsics, mount pose, water-plane assumptions, and uncertainty for every camera. Resolution and field of view alone are not enough for geolocation.
+
+For a quick horizontal detector dataset, `collect_horizontal.py` takes runtime
+control of the existing target vessel through gzweb, aims one tower through its
+normal MAVLink servo interface, and saves direct MJPEG frames without rebuilding
+the world or restarting any container:
+
+```sh
+python -m pip install -e '.[collection]'
+python scripts/collect_horizontal.py --host 10.99.0.1 --camera tower-1 \
+  --samples 4 --take-over-target --confirm-network --confirm-simulator-control
+```
+
+The moving vessel's path plugin otherwise overwrites manual positions every
+simulation update. `--take-over-target` therefore deletes only that model,
+spawns the same cached `fishing_vessel` under a unique training-only name, and
+moves that stationary copy between captures. The simulator remains running,
+but the training vessel stays at the final collected pose;
+use the operator's normal Reset after the collection session to restore the
+course-controlled target. Output includes raw tower JPEGs, pose/servo metadata,
+and approximate projected YOLO pre-labels. Treat those labels as proposals and
+review them before training. Pass `--poses poses.csv` to choose exact world
+positions and headings; the CSV columns are
+`name,x,y,yaw_deg,view_offset_deg`.
 
 ## Detector and tracking integration
 

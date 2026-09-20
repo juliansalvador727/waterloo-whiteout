@@ -25,6 +25,10 @@ class VehicleStateError(RuntimeError):
     """Raised when a safe control transition cannot be verified."""
 
 
+class TowerCommandError(VehicleStateError):
+    """Raised when AntennaTracker does not accept a tower servo command."""
+
+
 class CopterMode(str, Enum):
     STABILIZE = "STABILIZE"
     LOITER = "LOITER"
@@ -341,11 +345,28 @@ class PlaneController(ObjectController[Plane]):
 class TowerController(ObjectController[Tower]):
     """Typed pan/tilt functions for one simulated tower."""
 
-    def pan(self, pwm: int) -> None:
-        self._send(self.vehicle.pan(pwm))
+    def _set_servo(self, command: MavProxyCommand, *, timeout_s: float) -> None:
+        if timeout_s <= 0:
+            raise ValueError("tower command timeout must be positive")
+        checkpoint = len(self.session.output)
+        self._send(command)
+        accepted = "Got COMMAND_ACK: DO_SET_SERVO: ACCEPTED"
+        if self.session.wait_for_output(
+            accepted, timeout=timeout_s, start=checkpoint
+        ):
+            return
+        response = self.session.output[checkpoint:].strip()
+        detail = f" MAVProxy output: {response}" if response else ""
+        raise TowerCommandError(
+            f"{self.vehicle.name} did not accept {command} within "
+            f"{timeout_s:g} seconds.{detail}"
+        )
 
-    def tilt(self, pwm: int) -> None:
-        self._send(self.vehicle.tilt(pwm))
+    def pan(self, pwm: int, *, timeout_s: float = 3.0) -> None:
+        self._set_servo(self.vehicle.pan(pwm), timeout_s=timeout_s)
+
+    def tilt(self, pwm: int, *, timeout_s: float = 3.0) -> None:
+        self._set_servo(self.vehicle.tilt(pwm), timeout_s=timeout_s)
 
     def center(self) -> None:
         self.pan(1500)

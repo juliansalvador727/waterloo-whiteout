@@ -68,12 +68,12 @@ class MavProxyTests(unittest.TestCase):
             (
                 *expected_launcher,
                 "--master=udpout:sim.example:14550",
-                "--no-console",
                 "--no-state",
                 "--default-modules=wp,param,arm,mode,rc,misc,cmdlong,battery",
             ),
         )
         self.assertFalse(popen.call_args.kwargs.get("shell", False))
+        self.assertIn("whiteout-mavproxy-", popen.call_args.kwargs["cwd"])
         self.assertEqual(
             process.stdin.getvalue(),
             "mode GUIDED\narm throttle\ntakeoff 20\nexit\n",
@@ -90,7 +90,7 @@ class MavProxyTests(unittest.TestCase):
                 session.send(tower.pan(1200))
         self.assertEqual(
             process.stdin.getvalue(),
-            "cmdlong MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0\nexit\n",
+            "long MAV_CMD_DO_SET_SERVO 1 1200 0 0 0 0 0\nexit\n",
         )
 
     def test_missing_mavproxy_has_clear_install_message(self) -> None:
