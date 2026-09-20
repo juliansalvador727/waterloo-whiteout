@@ -17,3 +17,5 @@ runs/
 .DS_Store
 external/
 live-check/
+dataset-tower/
+recordings/

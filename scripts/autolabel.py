@@ -14,6 +14,8 @@ import torch
 from torchvision.ops import nms
 from ultralytics import YOLO
 
+from whiteout.redhull import red_hull_box
+
 BOAT, ICE = 0, 1
 
 
@@ -59,42 +61,6 @@ def ice_boxes(image: np.ndarray, min_area: int) -> list[tuple[float, float, floa
         x, y, w, h = cv2.boundingRect(contour)
         boxes.append((x, y, x + w, y + h))
     return boxes
-
-
-def red_hull_box(image: np.ndarray, min_pixels: int = 4) -> tuple[float, float, float, float] | None:
-    """Box around the largest red blob (the boat's hull), padded to cover the superstructure."""
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    red = (((hue <= 8) | (hue >= 170)) & (sat > 90) & (val > 60)).astype(np.uint8)
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(cv2.dilate(red, np.ones((5, 5), np.uint8)))
-    best, best_pixels = None, min_pixels - 1
-    for index in range(1, count):
-        pixels = int(red[labels == index].sum())
-        if pixels > best_pixels:
-            best, best_pixels = index, pixels
-    if best is None:
-        return None
-    x, y, w, h = stats[best][:4]
-    height, width = image.shape[:2]
-    pad = max(3, int(0.3 * max(w, h)))
-    fallback = (max(0, x - pad), max(0, y - pad), min(width, x + w + pad), min(height, y + h + pad))
-
-    # Grow to the whole ship: the non-dark region touching the red blob, within a local window.
-    reach = max(30, 3 * max(w, h))
-    wx1, wy1 = max(0, x - reach), max(0, y - reach)
-    wx2, wy2 = min(width, x + w + reach), min(height, y + h + reach)
-    solid = ((val[wy1:wy2, wx1:wx2] > 70) | (labels[wy1:wy2, wx1:wx2] == best)).astype(np.uint8)
-    solid = cv2.morphologyEx(solid, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    _, parts, part_stats, _ = cv2.connectedComponentsWithStats(solid)
-    seed = parts[labels[wy1:wy2, wx1:wx2] == best]
-    seed = seed[seed > 0]
-    if seed.size == 0:
-        return fallback
-    px, py, pw, ph = part_stats[np.bincount(seed).argmax()][:4]
-    touches_edge = px == 0 or py == 0 or px + pw >= wx2 - wx1 or py + ph >= wy2 - wy1
-    if touches_edge or pw * ph > 0.6 * (wx2 - wx1) * (wy2 - wy1):
-        return fallback  # merged with ice, land, sky or bright water streaks
-    return (wx1 + px, wy1 + py, wx1 + px + pw, wy1 + py + ph)
 
 
 def overlaps(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
@@ -153,12 +119,15 @@ def main() -> int:
         height, width = image.shape[:2]
         boats = boat_boxes(model, image, args.boat_conf)
         red_boats = []
-        if not boats and args.boat_in_every_frame:
+        if args.boat_in_every_frame:
+            # The red hull also recovers distant vessels the model missed while
+            # finding a nearer one, so it runs whether or not there are boxes.
             hull = red_hull_box(image)
-            if hull is None:
+            if hull is not None and not any(overlaps(hull, box) for box in boats):
+                red_boats = [hull]
+            if not boats and not red_boats:
                 skipped.append(path.name)
                 continue
-            red_boats = [hull]
         boats += red_boats
         ice = [box for box in ice_boxes(image, args.ice_min_area) if not any(overlaps(box, b) for b in boats)]
         boat_total += len(boats)
