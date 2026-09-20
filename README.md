@@ -103,6 +103,11 @@ dashboard at `http://127.0.0.1:8070`, uploads both bundled missions, and prompts
 takeoff and AUTO transition. `quit` or Ctrl+C stops new submissions and requests RTL for both
 aircraft. The fixed-wing RTL command does not imply that it has landed.
 
+Because both aircraft cameras face forward, quad tracking uses an altitude-derived observation
+standoff instead of flying to the vessel coordinates. The quad selects a course-bounded point
+that centres the vessel along the 20-degree-down camera axis, preserves flight altitude, and
+yaws toward the vessel. The fixed-wing remains on its broad search route.
+
 Tower motion is configured separately for each unit under `tower_motion`. Pan and tilt requests
 are clamped to the configured soft limits, then slewed at `pan_rate_deg_s` and
 `tilt_rate_deg_s` using `command_hz` updates. A search scan holds its one-second dwell only after

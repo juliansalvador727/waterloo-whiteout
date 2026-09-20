@@ -9,6 +9,7 @@ from typing import Protocol
 
 from .control import CopterMode
 from .models import ControlIntent, Telemetry, TrackEstimate
+from .pose import QUADCOPTER_CAMERA_DOWN_DEG
 from .track_api import TrackApiClient
 
 
@@ -16,6 +17,10 @@ class _CopterController(Protocol):
     def set_mode(self, mode: CopterMode) -> None: ...
 
     def goto_global(self, latitude: float, longitude: float, relative_altitude_m: float) -> None: ...
+
+    def set_yaw(
+        self, angle_deg: float, angular_speed_dps: float, *, relative: bool = False
+    ) -> None: ...
 
     def set_mission_current(self, sequence: int) -> None: ...
 
@@ -40,6 +45,7 @@ class SimulatorActuator:
     copter: _CopterController
     towers: Mapping[str, _TowerController]
     telemetry_for: Callable[[str], Telemetry | None]
+    course_contains: Callable[[float, float], bool] | None = None
     _interrupted_mission_sequence: int | None = None
 
     def __call__(self, intent: ControlIntent) -> None:
@@ -68,12 +74,32 @@ class SimulatorActuator:
             raise RuntimeError("quadcopter relative altitude is unavailable")
         if self._interrupted_mission_sequence is None:
             self._interrupted_mission_sequence = telemetry.mission_sequence
-        self.copter.set_mode(CopterMode.GUIDED)
-        self.copter.goto_global(
+        candidates = _forward_camera_observation_points(
+            telemetry,
             intent.target.latitude,
             intent.target.longitude,
+        )
+        observation = next(
+            (
+                candidate
+                for candidate in candidates
+                if self.course_contains is None
+                or self.course_contains(candidate[0], candidate[1])
+            ),
+            None,
+        )
+        if observation is None:
+            raise RuntimeError(
+                "no forward-camera observation point is inside the course bounds"
+            )
+        latitude, longitude, heading_deg = observation
+        self.copter.set_mode(CopterMode.GUIDED)
+        self.copter.goto_global(
+            latitude,
+            longitude,
             telemetry.relative_altitude_m,
         )
+        self.copter.set_yaw(heading_deg, 20.0)
 
     @staticmethod
     def _actuate_tower(controller: _TowerController, intent: ControlIntent) -> None:
@@ -110,3 +136,65 @@ def _local_offset_m(
         * math.cos(mean_latitude)
     )
     return north_m, east_m
+
+
+def _forward_camera_observation_points(
+    telemetry: Telemetry,
+    target_latitude: float,
+    target_longitude: float,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Return two standoff points whose forward camera can centre the target."""
+    camera_height_m = float(telemetry.altitude_m)
+    if not math.isfinite(camera_height_m) or camera_height_m <= 0:
+        raise RuntimeError("quadcopter altitude above water is unavailable")
+    standoff_m = camera_height_m / math.tan(math.radians(QUADCOPTER_CAMERA_DOWN_DEG))
+    target_north_m, target_east_m = _local_offset_m(
+        telemetry.latitude,
+        telemetry.longitude,
+        target_latitude,
+        target_longitude,
+    )
+    target_range_m = math.hypot(target_north_m, target_east_m)
+    if target_range_m > 0.01:
+        forward_north = target_north_m / target_range_m
+        forward_east = target_east_m / target_range_m
+    elif telemetry.yaw_rad is not None and math.isfinite(telemetry.yaw_rad):
+        forward_north = math.cos(telemetry.yaw_rad)
+        forward_east = math.sin(telemetry.yaw_rad)
+    else:
+        raise RuntimeError(
+            "cannot choose a forward-camera standoff direction without range or yaw"
+        )
+
+    preferred = _offset_coordinate(
+        target_latitude,
+        target_longitude,
+        -forward_north * standoff_m,
+        -forward_east * standoff_m,
+    )
+    alternate = _offset_coordinate(
+        target_latitude,
+        target_longitude,
+        forward_north * standoff_m,
+        forward_east * standoff_m,
+    )
+    heading_deg = math.degrees(math.atan2(forward_east, forward_north)) % 360.0
+    return (
+        (preferred[0], preferred[1], heading_deg),
+        (alternate[0], alternate[1], (heading_deg + 180.0) % 360.0),
+    )
+
+
+def _offset_coordinate(
+    latitude: float,
+    longitude: float,
+    north_m: float,
+    east_m: float,
+) -> tuple[float, float]:
+    radius_m = 6_378_137.0
+    result_latitude = latitude + math.degrees(north_m / radius_m)
+    cosine = math.cos(math.radians(latitude))
+    if abs(cosine) < 1e-9:
+        raise RuntimeError("cannot calculate longitude offset at the geographic pole")
+    result_longitude = longitude + math.degrees(east_m / (radius_m * cosine))
+    return result_latitude, result_longitude

@@ -397,6 +397,7 @@ class UnifiedCoordinatorRuntime:
             controllers["quadcopter"],  # type: ignore[arg-type]
             self.towers,
             self.latest_telemetry,
+            config.course_bounds.contains if config.course_bounds is not None else None,
         )
         live_executor = LiveExecutor(
             actuator, live_enabled=True, operator_session=self.operator_session

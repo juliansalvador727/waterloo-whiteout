@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import math
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import Mock
 
 from whiteout.control import CopterMode
-from whiteout.live import SimulatorActuator, TrackApiSubmitter
+from whiteout.live import SimulatorActuator, TrackApiSubmitter, _local_offset_m
 from whiteout.models import ControlIntent, GeoEstimate, Telemetry, Track, TrackEstimate
 
 
@@ -23,11 +24,25 @@ class SimulatorActuatorTests(unittest.TestCase):
             lambda name: self.telemetry if name == "quadcopter" else None,
         )
 
-    def test_copter_target_uses_global_position_and_preserves_altitude(self) -> None:
+    def test_copter_uses_forward_camera_standoff_and_preserves_altitude(self) -> None:
         target = GeoEstimate(72.001, -94.999, 2.0)
         self.actuator(ControlIntent("quadcopter", "divert", target))
         self.copter.set_mode.assert_called_once_with(CopterMode.GUIDED)
-        self.copter.goto_global.assert_called_once_with(72.001, -94.999, 90.0)
+        latitude, longitude, altitude = self.copter.goto_global.call_args.args
+        self.assertEqual(altitude, 90.0)
+        self.assertNotEqual((latitude, longitude), (target.latitude, target.longitude))
+        north_m, east_m = _local_offset_m(
+            latitude, longitude, target.latitude, target.longitude
+        )
+        expected_standoff_m = self.telemetry.altitude_m / math.tan(math.radians(20.0))
+        self.assertAlmostEqual(math.hypot(north_m, east_m), expected_standoff_m, delta=0.5)
+        heading_deg, yaw_rate = self.copter.set_yaw.call_args.args
+        self.assertAlmostEqual(
+            heading_deg,
+            math.degrees(math.atan2(east_m, north_m)) % 360.0,
+            places=2,
+        )
+        self.assertEqual(yaw_rate, 20.0)
 
         self.actuator(ControlIntent("quadcopter", "resume_search"))
         self.copter.set_mission_current.assert_called_once_with(7)
@@ -50,6 +65,26 @@ class SimulatorActuatorTests(unittest.TestCase):
             actuator(ControlIntent("quadcopter", "divert", target))
         with self.assertRaises(ValueError):
             actuator(ControlIntent("fixed-wing", "divert", target))
+
+    def test_copter_uses_alternate_standoff_when_preferred_point_is_outside_course(self) -> None:
+        target = GeoEstimate(72.001, -94.999, 2.0)
+        unrestricted = SimulatorActuator(
+            self.copter,
+            {},
+            lambda _name: self.telemetry,
+        )
+        unrestricted(ControlIntent("quadcopter", "divert", target))
+        preferred = self.copter.goto_global.call_args.args[:2]
+        self.copter.reset_mock()
+        bounded = SimulatorActuator(
+            self.copter,
+            {},
+            lambda _name: self.telemetry,
+            lambda latitude, longitude: (latitude, longitude) != preferred,
+        )
+        bounded(ControlIntent("quadcopter", "divert", target))
+        alternate = self.copter.goto_global.call_args.args[:2]
+        self.assertNotEqual(alternate, preferred)
 
 
 class TrackApiSubmitterTests(unittest.TestCase):
